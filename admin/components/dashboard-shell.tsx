@@ -13,6 +13,7 @@ import {
   Inbox,
   Users,
   Building2,
+  Wallet,
   Settings,
   LogOut,
   Menu,
@@ -32,6 +33,7 @@ const nav = [
   { label: 'Генератор PDF', href: '/pdf-generator', icon: FileOutput },
   { label: 'Шаблоны', href: '/templates', icon: FileStack },
   { label: 'Заявки', href: '/applications', icon: Inbox },
+  { label: 'Платежи', href: '/payments', icon: Wallet },
   { label: 'Настройки', href: '/settings', icon: Settings },
 ]
 

@@ -322,3 +322,55 @@ export async function fetchFederation(id: string): Promise<FederationDetail> {
 
   return res.json()
 }
+
+export type Payment = {
+  id: string
+  application_id: string
+  provider: string
+  provider_payment_id: string
+  amount_kopecks: number
+  currency: string
+  status: string
+  paid_at: string | null
+  created_at: string
+  person: PersonSummary
+  federation: FederationSummary
+  product: ProductSummary
+  policy_number: string | null
+}
+
+export type PaymentApplicationSummary = {
+  id: string
+  status: ApplicationStatus
+  amount_kopecks: number
+  created_at: string
+}
+
+export type PaymentDetail = Payment & {
+  application: PaymentApplicationSummary | null
+  policy: PolicySummary | null
+}
+
+export async function fetchPayments(): Promise<Payment[]> {
+  const res = await fetch('/api/payments', {
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw new ApiError(res.status)
+  }
+
+  return res.json()
+}
+
+export async function fetchPayment(id: string): Promise<PaymentDetail> {
+  const res = await fetch(`/api/payments/${id}`, {
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw new ApiError(res.status)
+  }
+
+  return res.json()
+}
