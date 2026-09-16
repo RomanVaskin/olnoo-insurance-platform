@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { pool } from '../db/pool';
-import { authenticate, getAccessibleFederationIds, assertApplicationRecordAccess } from '../modules/auth/guards';
-import { assertUuid, NotFoundError, toNumber } from '../lib/api-helpers';
+import { authenticate, getAccessibleFederationIds, assertApplicationRecordAccess, AuthError } from '../modules/auth/guards';
+import { assertUuid, NotFoundError, BadRequestError, toNumber } from '../lib/api-helpers';
 import { federationSummary, personSummary, productSummary } from '../lib/mappers';
 import { getLatestPaymentForApplication, getPolicyForApplication } from '../lib/related-queries';
 
@@ -82,6 +82,55 @@ export async function applicationsRoutes(app: FastifyInstance): Promise<void> {
       ...mapApplicationRow(row),
       payment,
       policy,
+    });
+  });
+
+  // Athlete self-service creation: every value that determines cost or ownership
+  // (person_id, federation_id, price) is derived server-side from the athlete's own
+  // federation_products assignment — never accepted from the request body.
+  app.post<{ Body: { product_id?: string } }>('/api/applications', async (request, reply) => {
+    const account = await authenticate(request);
+
+    if (account.role !== 'athlete') {
+      throw new AuthError(403, 'forbidden');
+    }
+    if (!account.person_id) {
+      throw new AuthError(403, 'forbidden');
+    }
+
+    const productId = request.body?.product_id;
+    if (!productId) {
+      throw new BadRequestError('product_id_required');
+    }
+    assertUuid(productId);
+
+    const assignmentResult = await pool.query(
+      `SELECT fp.id AS federation_product_id, fp.federation_id, fp.price_kopecks
+       FROM federation_memberships fm
+       JOIN federation_products fp ON fp.federation_id = fm.federation_id AND fp.active = true
+       JOIN insurance_products ip ON ip.id = fp.product_id AND ip.status = 'active'
+       WHERE fm.person_id = $1 AND fm.status = 'active' AND fp.product_id = $2`,
+      [account.person_id, productId],
+    );
+
+    const assignment = assignmentResult.rows[0];
+    if (!assignment) {
+      throw new BadRequestError('product_not_available');
+    }
+
+    const insertResult = await pool.query(
+      `INSERT INTO applications (person_id, federation_id, product_id, federation_product_id, status, amount_kopecks)
+       VALUES ($1, $2, $3, $4, 'pending_payment', $5)
+       RETURNING id, status, product_id, amount_kopecks`,
+      [account.person_id, assignment.federation_id, productId, assignment.federation_product_id, assignment.price_kopecks],
+    );
+
+    const row = insertResult.rows[0];
+    return reply.status(201).send({
+      application_id: row.id,
+      status: row.status,
+      product_id: row.product_id,
+      amount_kopecks: toNumber(row.amount_kopecks),
     });
   });
 }
