@@ -4,23 +4,26 @@
 -- Run after db/migrations/001_init_schema.sql on an otherwise empty database.
 -- Fixed UUIDs are used so rows are easy to reference/inspect in development.
 
+-- Development password for all seeded accounts below: Test1234!
+-- Hashes are bcrypt (cost 12) of that password, generated via src/modules/auth/password.ts.
+
 -- 1 super admin (staff account, not tied to a Person)
-INSERT INTO accounts (id, person_id, email, role, status, created_at, updated_at) VALUES
-    ('00000000-0000-0000-0000-000000000101', NULL, 'admin@olnoo.dev', 'super_admin', 'active', now(), now());
+INSERT INTO accounts (id, person_id, email, password_hash, role, status, created_at, updated_at) VALUES
+    ('00000000-0000-0000-0000-000000000101', NULL, 'admin@olnoo.dev', '$2b$12$u4efbAEGlk3S.s3jn5wi4eVLLNb42zOBZeXGgRVJ.mFL.eXp2AvY.', 'super_admin', 'active', now(), now());
 
 -- 1 federation
 INSERT INTO federations (id, name, slug, status, created_at, updated_at) VALUES
     ('00000000-0000-0000-0000-000000000201', 'Федерация всестилевого каратэ России', 'vsestilevoe-karate-rf', 'active', now(), now());
 
 -- 1 secretary (staff account, not tied to a Person)
-INSERT INTO accounts (id, person_id, email, role, status, created_at, updated_at) VALUES
-    ('00000000-0000-0000-0000-000000000102', NULL, 'secretary@vsestilevoe-karate.olnoo.dev', 'federation_secretary', 'active', now(), now());
+INSERT INTO accounts (id, person_id, email, password_hash, role, status, created_at, updated_at) VALUES
+    ('00000000-0000-0000-0000-000000000102', NULL, 'secretary@vsestilevoe-karate.olnoo.dev', '$2b$12$KuhtNCs6uTGbFC3lr5gX8OssL6K25pNSOepTpUVpEpytkOjevT/EC', 'federation_secretary', 'active', now(), now());
 INSERT INTO federation_users (id, federation_id, account_id, role, created_at) VALUES
     ('00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000102', 'secretary', now());
 
 -- 1 director (staff account, not tied to a Person)
-INSERT INTO accounts (id, person_id, email, role, status, created_at, updated_at) VALUES
-    ('00000000-0000-0000-0000-000000000103', NULL, 'director@vsestilevoe-karate.olnoo.dev', 'federation_director', 'active', now(), now());
+INSERT INTO accounts (id, person_id, email, password_hash, role, status, created_at, updated_at) VALUES
+    ('00000000-0000-0000-0000-000000000103', NULL, 'director@vsestilevoe-karate.olnoo.dev', '$2b$12$ykdEWLzcLq71WBKPSBt8Z.M6n6kryLe9MNbDIceVjDc3c7.3zj3Qe', 'federation_director', 'active', now(), now());
 INSERT INTO federation_users (id, federation_id, account_id, role, created_at) VALUES
     ('00000000-0000-0000-0000-000000000302', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000103', 'director', now());
 
@@ -30,8 +33,9 @@ INSERT INTO persons (id, last_name, first_name, patronymic, birthdate, gender, p
     ('00000000-0000-0000-0000-000000000002', 'Сидорова', 'Анна', 'Сергеевна', '2007-07-21', 'female', '+79001234502', 'sidorova@example.dev', now(), now()),
     ('00000000-0000-0000-0000-000000000003', 'Кузнецов', 'Алексей', 'Дмитриевич', '2003-11-02', 'male', '+79001234503', 'kuznetsov@example.dev', now(), now());
 
-INSERT INTO accounts (id, person_id, email, role, status, created_at, updated_at) VALUES
-    ('00000000-0000-0000-0000-000000000104', '00000000-0000-0000-0000-000000000001', 'petrov@example.dev', 'athlete', 'active', now(), now()),
+-- Only the first athlete (Петров) gets a usable login password for development.
+INSERT INTO accounts (id, person_id, email, password_hash, role, status, created_at, updated_at) VALUES
+    ('00000000-0000-0000-0000-000000000104', '00000000-0000-0000-0000-000000000001', 'petrov@example.dev', '$2b$12$QND2syTNsj.IBhhXWPtYQObbaL.GAPAMxZRDOoedq/e6AVNljVf02', 'athlete', 'active', now(), now()),
     ('00000000-0000-0000-0000-000000000105', '00000000-0000-0000-0000-000000000002', 'sidorova@example.dev', 'athlete', 'active', now(), now()),
     ('00000000-0000-0000-0000-000000000106', '00000000-0000-0000-0000-000000000003', 'kuznetsov@example.dev', 'athlete', 'active', now(), now());
 

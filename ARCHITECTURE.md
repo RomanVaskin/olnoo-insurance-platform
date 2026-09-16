@@ -97,7 +97,7 @@ Service:
 
 OLNOO Insurance Platform backend
 - host: 127.0.0.1
-- port: 3240
+- port: 3250
 - project: /opt/olnoo/projects/olnoo-insurance-platform
 
 ---
