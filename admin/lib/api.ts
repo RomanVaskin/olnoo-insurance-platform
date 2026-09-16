@@ -250,3 +250,75 @@ export async function fetchAthlete(id: string): Promise<AthleteDetail> {
 
   return res.json()
 }
+
+export type Federation = {
+  id: string
+  name: string
+  slug: string
+  status: string
+  athlete_count: number
+  policy_count?: number
+  paid_amount_kopecks?: number
+}
+
+export type FederationAssignedUser = {
+  id: string
+  email: string | null
+  role: string
+}
+
+export type FederationAthlete = {
+  id: string
+  last_name: string
+  first_name: string
+  patronymic: string | null
+  club: string | null
+  coach: string | null
+  grade: string | null
+  weight: number | null
+  sport_name: string | null
+  insured: boolean
+  active_policy_number: string | null
+}
+
+export type FederationAssignedProduct = {
+  id: string
+  product: { id: string; name: string; category: string }
+  price_kopecks: number
+  active: boolean
+}
+
+export type FederationDetail = {
+  federation: { id: string; name: string; slug: string; status: string }
+  assigned_users: FederationAssignedUser[]
+  athlete_count: number
+  athletes: FederationAthlete[]
+  assigned_products: FederationAssignedProduct[]
+  application_count?: number
+  policy_count?: number
+  paid_amount_kopecks?: number
+}
+
+export async function fetchFederations(): Promise<Federation[]> {
+  const res = await fetch('/api/federations', {
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw new ApiError(res.status)
+  }
+
+  return res.json()
+}
+
+export async function fetchFederation(id: string): Promise<FederationDetail> {
+  const res = await fetch(`/api/federations/${id}`, {
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw new ApiError(res.status)
+  }
+
+  return res.json()
+}
