@@ -36,8 +36,8 @@ INSERT INTO persons (id, last_name, first_name, patronymic, birthdate, gender, p
 -- Only the first athlete (Петров) gets a usable login password for development.
 INSERT INTO accounts (id, person_id, email, password_hash, role, status, created_at, updated_at) VALUES
     ('00000000-0000-0000-0000-000000000104', '00000000-0000-0000-0000-000000000001', 'petrov@example.dev', '$2b$12$QND2syTNsj.IBhhXWPtYQObbaL.GAPAMxZRDOoedq/e6AVNljVf02', 'athlete', 'active', now(), now()),
-    ('00000000-0000-0000-0000-000000000105', '00000000-0000-0000-0000-000000000002', 'sidorova@example.dev', 'athlete', 'active', now(), now()),
-    ('00000000-0000-0000-0000-000000000106', '00000000-0000-0000-0000-000000000003', 'kuznetsov@example.dev', 'athlete', 'active', now(), now());
+    ('00000000-0000-0000-0000-000000000105', '00000000-0000-0000-0000-000000000002', 'sidorova@example.dev', NULL, 'athlete', 'active', now(), now()),
+    ('00000000-0000-0000-0000-000000000106', '00000000-0000-0000-0000-000000000003', 'kuznetsov@example.dev', NULL, 'athlete', 'active', now(), now());
 
 INSERT INTO federation_memberships (id, federation_id, person_id, club, coach, grade, weight, sport_name, status, created_at, updated_at) VALUES
     ('00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000001', 'СК Барс', 'Иванов И.И.', '1 разряд', 65.50, 'Каратэ', 'active', now(), now()),
