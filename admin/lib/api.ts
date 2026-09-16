@@ -374,3 +374,49 @@ export async function fetchPayment(id: string): Promise<PaymentDetail> {
 
   return res.json()
 }
+
+export type Product = {
+  id: string
+  name: string
+  category: string
+  insurer_name: string | null
+  coverage_amount_kopecks: number | null
+  validity_days: number
+  base_price_kopecks: number
+  status: string
+}
+
+export type ProductFederationAssignment = {
+  id: string
+  federation: { id: string; name: string }
+  price_kopecks: number
+  active: boolean
+}
+
+export type ProductDetail = Product & {
+  federation_assignments: ProductFederationAssignment[]
+}
+
+export async function fetchProducts(): Promise<Product[]> {
+  const res = await fetch('/api/products', {
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw new ApiError(res.status)
+  }
+
+  return res.json()
+}
+
+export async function fetchProduct(id: string): Promise<ProductDetail> {
+  const res = await fetch(`/api/products/${id}`, {
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw new ApiError(res.status)
+  }
+
+  return res.json()
+}
