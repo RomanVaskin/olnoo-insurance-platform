@@ -88,3 +88,31 @@ export function requireOwnPerson(account: SessionAccount, personId: string): voi
     throw new AuthError(403, 'forbidden');
   }
 }
+
+/**
+ * Read-API collection guard: super_admin sees everything (returns null = no filter),
+ * federation_secretary/federation_director are scoped to the federations they belong
+ * to (returns their federation_id list, possibly empty). Any other role (athlete,
+ * guardian) is denied outright with 403.
+ */
+export async function getAccessibleFederationIds(account: SessionAccount): Promise<string[] | null> {
+  if (account.role === 'super_admin') {
+    return null;
+  }
+
+  if (account.role !== 'federation_secretary' && account.role !== 'federation_director') {
+    throw new AuthError(403, 'forbidden');
+  }
+
+  const result = await pool.query<{ federation_id: string }>(
+    `SELECT federation_id FROM federation_users WHERE account_id = $1`,
+    [account.id],
+  );
+
+  return result.rows.map((row) => row.federation_id);
+}
+
+/** Whether the account may see federation-level financial aggregates (paid_amount_kopecks, policy_count, application_count). */
+export function isFinanceAllowed(role: string): boolean {
+  return role === 'super_admin' || role === 'federation_director';
+}
