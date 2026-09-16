@@ -93,6 +93,13 @@ Project:
 - documentation;
 - AI instructions.
 
+Service:
+
+OLNOO Insurance Platform backend
+- host: 127.0.0.1
+- port: 3240
+- project: /opt/olnoo/projects/olnoo-insurance-platform
+
 ---
 
 ## 5. Backend
