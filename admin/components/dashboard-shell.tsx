@@ -11,6 +11,7 @@ import {
   FileOutput,
   FileStack,
   Inbox,
+  Users,
   Settings,
   LogOut,
   Menu,
@@ -23,6 +24,7 @@ import { getCurrentAccount, logout } from '@/lib/auth'
 const nav = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { label: 'Полисы', href: '/', icon: FileText },
+  { label: 'Спортсмены', href: '/athletes', icon: Users },
   { label: 'Пулы номеров', href: '/pools', icon: Layers },
   { label: 'Выпущенные полисы', href: '/issued', icon: BadgeCheck },
   { label: 'Генератор PDF', href: '/pdf-generator', icon: FileOutput },

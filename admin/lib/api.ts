@@ -155,3 +155,98 @@ export async function fetchPolicy(id: string): Promise<PolicyDetail> {
 
   return res.json()
 }
+
+export type Athlete = {
+  id: string
+  last_name: string
+  first_name: string
+  patronymic: string | null
+  birthdate: string
+  gender: string | null
+  phone: string | null
+  email: string | null
+  federation: FederationSummary
+  club: string | null
+  coach: string | null
+  grade: string | null
+  weight: number | null
+  sport_name: string | null
+  insured: boolean
+  active_policy_number: string | null
+}
+
+export type AthletePerson = {
+  id: string
+  last_name: string
+  first_name: string
+  patronymic: string | null
+  birthdate: string
+  gender: string | null
+  phone: string | null
+  email: string | null
+}
+
+export type AthleteFederationMembership = {
+  federation: FederationSummary
+  club: string | null
+  coach: string | null
+  grade: string | null
+  weight: number | null
+  sport_name: string | null
+  status: string
+}
+
+export type AthletePayment = PaymentSummary & {
+  application_id: string
+}
+
+export type AthletePolicy = {
+  id: string
+  policy_number: string
+  status: string
+  valid_from: string
+  valid_to: string
+  policy_url: string | null
+  product: ProductSummary
+}
+
+export type AthleteApplication = {
+  id: string
+  status: ApplicationStatus
+  amount_kopecks: number
+  created_at: string
+  federation: FederationSummary
+  product: ProductSummary
+}
+
+export type AthleteDetail = {
+  person: AthletePerson
+  federation_memberships: AthleteFederationMembership[]
+  applications: AthleteApplication[]
+  payments: AthletePayment[]
+  policies: AthletePolicy[]
+}
+
+export async function fetchAthletes(): Promise<Athlete[]> {
+  const res = await fetch('/api/athletes', {
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw new ApiError(res.status)
+  }
+
+  return res.json()
+}
+
+export async function fetchAthlete(id: string): Promise<AthleteDetail> {
+  const res = await fetch(`/api/athletes/${id}`, {
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw new ApiError(res.status)
+  }
+
+  return res.json()
+}
