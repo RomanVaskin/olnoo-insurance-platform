@@ -105,3 +105,53 @@ export async function fetchApplication(id: string): Promise<ApplicationDetail> {
 
   return res.json()
 }
+
+export type PolicyStatus = 'active' | 'cancelled' | 'expired'
+
+export type Policy = {
+  id: string
+  policy_number: string
+  status: PolicyStatus
+  valid_from: string
+  valid_to: string
+  policy_url: string | null
+  person: PersonSummary
+  federation: FederationSummary
+  product: ProductSummary
+}
+
+export type PolicyApplicationSummary = {
+  id: string
+  status: ApplicationStatus
+  amount_kopecks: number
+  created_at: string
+}
+
+export type PolicyDetail = Policy & {
+  application: PolicyApplicationSummary | null
+  payment: PaymentSummary | null
+}
+
+export async function fetchPolicies(): Promise<Policy[]> {
+  const res = await fetch('/api/policies', {
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw new ApiError(res.status)
+  }
+
+  return res.json()
+}
+
+export async function fetchPolicy(id: string): Promise<PolicyDetail> {
+  const res = await fetch(`/api/policies/${id}`, {
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw new ApiError(res.status)
+  }
+
+  return res.json()
+}
