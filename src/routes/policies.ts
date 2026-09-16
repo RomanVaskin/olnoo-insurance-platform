@@ -1,9 +1,15 @@
+import path from 'node:path';
+import { createReadStream } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import type { FastifyInstance } from 'fastify';
 import { pool } from '../db/pool';
 import { authenticate, getAccessibleFederationIds } from '../modules/auth/guards';
-import { assertUuid, NotFoundError, HttpError, toNumber } from '../lib/api-helpers';
+import type { SessionAccount } from '../modules/auth/session';
+import { assertUuid, NotFoundError, HttpError, BadRequestError, toNumber } from '../lib/api-helpers';
 import { federationSummary, personSummary, productSummary } from '../lib/mappers';
 import { getLatestPaymentForApplication } from '../lib/related-queries';
+import { generatePolicyPdf, PolicyGenerationDataError, UnsupportedInsurerError } from '../modules/policy-generator/generator';
+import { policyPdfFilePath } from '../modules/policy-generator/storage';
 
 const LIST_SELECT = `
   SELECT
@@ -32,6 +38,17 @@ function mapPolicyRow(row: Record<string, unknown>) {
   };
 }
 
+/** Same access rule as GET /api/policies/:id, shared with the PDF generate/download routes. */
+async function assertPolicyAccess(account: SessionAccount, accessFederationId: string | null): Promise<void> {
+  if (account.role === 'super_admin') {
+    return;
+  }
+  const federationIds = await getAccessibleFederationIds(account);
+  if (!accessFederationId || !federationIds?.includes(accessFederationId)) {
+    throw new HttpError(403, 'forbidden');
+  }
+}
+
 export async function policiesRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/policies', async (request, reply) => {
     const account = await authenticate(request);
@@ -57,13 +74,7 @@ export async function policiesRoutes(app: FastifyInstance): Promise<void> {
       throw new NotFoundError('policy_not_found');
     }
 
-    if (account.role !== 'super_admin') {
-      const federationIds = await getAccessibleFederationIds(account);
-      const accessFederationId = row.access_federation_id as string | null;
-      if (!accessFederationId || !federationIds?.includes(accessFederationId)) {
-        throw new HttpError(403, 'forbidden');
-      }
-    }
+    await assertPolicyAccess(account, row.access_federation_id as string | null);
 
     const applicationResult = await pool.query(
       `SELECT id, status, amount_kopecks, created_at FROM applications WHERE id = $1`,
@@ -86,5 +97,71 @@ export async function policiesRoutes(app: FastifyInstance): Promise<void> {
       application,
       payment,
     });
+  });
+
+  // Generates (or regenerates) the policy PDF from current platform data and
+  // records it as policies.policy_url. Written by staff roles (super_admin /
+  // federation_secretary / federation_director scoped to their federation) —
+  // same access rule as reading the policy.
+  app.post<{ Params: { id: string } }>('/api/policies/:id/generate-pdf', async (request, reply) => {
+    const account = await authenticate(request);
+    assertUuid(request.params.id);
+
+    const accessResult = await pool.query(
+      `SELECT federation_id AS access_federation_id FROM policies WHERE id = $1`,
+      [request.params.id],
+    );
+    const accessRow = accessResult.rows[0];
+    if (!accessRow) {
+      throw new NotFoundError('policy_not_found');
+    }
+    await assertPolicyAccess(account, accessRow.access_federation_id as string | null);
+
+    try {
+      const result = await generatePolicyPdf(request.params.id);
+      return reply.status(200).send({ policy_id: result.policyId, insurer: result.insurer, policy_url: result.policyUrl });
+    } catch (error) {
+      if (error instanceof PolicyGenerationDataError) {
+        throw new NotFoundError(error.message);
+      }
+      if (error instanceof UnsupportedInsurerError) {
+        throw new BadRequestError('unsupported_insurer');
+      }
+      throw error;
+    }
+  });
+
+  // Streams the privately stored policy PDF back to an authorized caller. The
+  // file never has a public/static URL — this authenticated route is the only
+  // access path (same pattern as GET /api/documents/:id/file).
+  app.get<{ Params: { id: string } }>('/api/policies/:id/pdf', async (request, reply) => {
+    const account = await authenticate(request);
+    assertUuid(request.params.id);
+
+    const result = await pool.query(
+      `SELECT policy_number, policy_url, federation_id AS access_federation_id FROM policies WHERE id = $1`,
+      [request.params.id],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      throw new NotFoundError('policy_not_found');
+    }
+    await assertPolicyAccess(account, row.access_federation_id as string | null);
+
+    const storedFilename = row.policy_url as string | null;
+    if (!storedFilename) {
+      throw new NotFoundError('policy_pdf_not_generated');
+    }
+
+    const filePath = policyPdfFilePath(storedFilename);
+    try {
+      await stat(filePath);
+    } catch {
+      throw new NotFoundError('policy_pdf_file_not_found');
+    }
+
+    reply.header('Content-Type', 'application/pdf');
+    reply.header('Content-Disposition', `attachment; filename="${row.policy_number}${path.extname(storedFilename)}"`);
+    return reply.send(createReadStream(filePath));
   });
 }
