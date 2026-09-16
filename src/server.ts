@@ -1,6 +1,7 @@
 import './lib/env';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
+import multipart from '@fastify/multipart';
 import { healthRoutes } from './routes/health';
 import { authRoutes } from './routes/auth';
 import { dashboardRoutes } from './routes/dashboard';
@@ -10,10 +11,12 @@ import { athletesRoutes } from './routes/athletes';
 import { federationsRoutes } from './routes/federations';
 import { paymentsRoutes } from './routes/payments';
 import { productsRoutes } from './routes/products';
+import { documentsRoutes } from './routes/documents';
 
 const app = Fastify();
 
 app.register(cookie);
+app.register(multipart, { limits: { fileSize: 20 * 1024 * 1024 }, attachFieldsToBody: true });
 app.register(healthRoutes);
 app.register(authRoutes);
 app.register(dashboardRoutes);
@@ -23,6 +26,7 @@ app.register(athletesRoutes);
 app.register(federationsRoutes);
 app.register(paymentsRoutes);
 app.register(productsRoutes);
+app.register(documentsRoutes);
 
 // Translates AuthError (401/403) and HttpError (400/404) thrown by route handlers
 // into their intended JSON responses; anything else is an unexpected 500.
