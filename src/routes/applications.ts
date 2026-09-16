@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { pool } from '../db/pool';
-import { authenticate, getAccessibleFederationIds } from '../modules/auth/guards';
-import { assertUuid, NotFoundError, HttpError, toNumber } from '../lib/api-helpers';
+import { authenticate, getAccessibleFederationIds, assertApplicationRecordAccess } from '../modules/auth/guards';
+import { assertUuid, NotFoundError, toNumber } from '../lib/api-helpers';
 import { federationSummary, personSummary, productSummary } from '../lib/mappers';
 import { getLatestPaymentForApplication, getPolicyForApplication } from '../lib/related-queries';
 
@@ -32,6 +32,20 @@ function mapApplicationRow(row: Record<string, unknown>) {
 export async function applicationsRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/applications', async (request, reply) => {
     const account = await authenticate(request);
+
+    // Athletes get their own applications only, never the federation-scoped
+    // collection (getAccessibleFederationIds denies the athlete role outright).
+    if (account.role === 'athlete') {
+      if (!account.person_id) {
+        return reply.status(200).send([]);
+      }
+      const result = await pool.query(
+        `${LIST_SELECT} WHERE a.person_id = $1 ORDER BY a.created_at DESC`,
+        [account.person_id],
+      );
+      return reply.status(200).send(result.rows.map(mapApplicationRow));
+    }
+
     const federationIds = await getAccessibleFederationIds(account);
 
     const result = await pool.query(
@@ -54,13 +68,10 @@ export async function applicationsRoutes(app: FastifyInstance): Promise<void> {
       throw new NotFoundError('application_not_found');
     }
 
-    if (account.role !== 'super_admin') {
-      const federationIds = await getAccessibleFederationIds(account);
-      const accessFederationId = row.access_federation_id as string | null;
-      if (!accessFederationId || !federationIds?.includes(accessFederationId)) {
-        throw new HttpError(403, 'forbidden');
-      }
-    }
+    await assertApplicationRecordAccess(account, {
+      federationId: row.access_federation_id as string | null,
+      personId: row.person_id as string | null,
+    });
 
     const [payment, policy] = await Promise.all([
       getLatestPaymentForApplication(row.id as string),

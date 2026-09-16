@@ -1,9 +1,8 @@
 import crypto from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { pool } from '../db/pool';
-import { authenticate, getAccessibleFederationIds } from '../modules/auth/guards';
-import type { SessionAccount } from '../modules/auth/session';
-import { assertUuid, NotFoundError, HttpError, BadRequestError, toNumber } from '../lib/api-helpers';
+import { authenticate, getAccessibleFederationIds, assertApplicationRecordAccess } from '../modules/auth/guards';
+import { assertUuid, NotFoundError, BadRequestError, toNumber } from '../lib/api-helpers';
 import { federationSummary, personSummary, productSummary } from '../lib/mappers';
 import { getPolicyForApplication } from '../lib/related-queries';
 import { createYookassaPayment, getYookassaPayment, mapYookassaStatus } from '../modules/payments/yookassa';
@@ -43,17 +42,6 @@ function mapPaymentRow(row: Record<string, unknown>) {
   };
 }
 
-/** Same access rule as GET /api/applications/:id: super_admin sees everything, federation staff are scoped to their federations. */
-async function assertApplicationAccess(account: SessionAccount, accessFederationId: string | null): Promise<void> {
-  if (account.role === 'super_admin') {
-    return;
-  }
-  const federationIds = await getAccessibleFederationIds(account);
-  if (!accessFederationId || !federationIds?.includes(accessFederationId)) {
-    throw new HttpError(403, 'forbidden');
-  }
-}
-
 export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/payments', async (request, reply) => {
     const account = await authenticate(request);
@@ -79,13 +67,10 @@ export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
       throw new NotFoundError('payment_not_found');
     }
 
-    if (account.role !== 'super_admin') {
-      const federationIds = await getAccessibleFederationIds(account);
-      const accessFederationId = row.access_federation_id as string | null;
-      if (!accessFederationId || !federationIds?.includes(accessFederationId)) {
-        throw new HttpError(403, 'forbidden');
-      }
-    }
+    await assertApplicationRecordAccess(account, {
+      federationId: row.access_federation_id as string | null,
+      personId: row.person_id as string | null,
+    });
 
     const applicationResult = await pool.query(
       `SELECT id, status, amount_kopecks, created_at FROM applications WHERE id = $1`,
@@ -123,7 +108,7 @@ export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
     assertUuid(applicationId);
 
     const applicationResult = await pool.query(
-      `SELECT a.id, a.status, a.amount_kopecks, a.federation_id AS access_federation_id, ip.name AS product_name, p.email AS person_email
+      `SELECT a.id, a.status, a.amount_kopecks, a.person_id, a.federation_id AS access_federation_id, ip.name AS product_name, p.email AS person_email
        FROM applications a
        JOIN insurance_products ip ON ip.id = a.product_id
        JOIN persons p ON p.id = a.person_id
@@ -135,7 +120,10 @@ export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
       throw new NotFoundError('application_not_found');
     }
 
-    await assertApplicationAccess(account, application.access_federation_id as string | null);
+    await assertApplicationRecordAccess(account, {
+      federationId: application.access_federation_id as string | null,
+      personId: application.person_id as string | null,
+    });
 
     if (application.status === 'paid' || application.status === 'policy_issued') {
       throw new BadRequestError('application_already_paid');
@@ -185,7 +173,7 @@ export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
 
     const result = await pool.query(
       `SELECT pay.id, pay.application_id, pay.provider, pay.provider_payment_id, pay.status, pay.paid_at,
-              a.federation_id AS access_federation_id, a.status AS application_status
+              a.person_id, a.federation_id AS access_federation_id, a.status AS application_status
        FROM payments pay
        JOIN applications a ON a.id = pay.application_id
        WHERE pay.id = $1`,
@@ -196,7 +184,10 @@ export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
       throw new NotFoundError('payment_not_found');
     }
 
-    await assertApplicationAccess(account, row.access_federation_id as string | null);
+    await assertApplicationRecordAccess(account, {
+      federationId: row.access_federation_id as string | null,
+      personId: row.person_id as string | null,
+    });
 
     if (row.provider !== 'yookassa') {
       throw new BadRequestError('unsupported_provider');

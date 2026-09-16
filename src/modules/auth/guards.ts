@@ -116,3 +116,30 @@ export async function getAccessibleFederationIds(account: SessionAccount): Promi
 export function isFinanceAllowed(role: string): boolean {
   return role === 'super_admin' || role === 'federation_director';
 }
+
+/**
+ * Per-record access rule shared by the applications/payments read and write
+ * routes: super_admin sees everything, an athlete may access only a record
+ * belonging to their own person_id, federation staff are scoped to their
+ * federations (unchanged behavior, via getAccessibleFederationIds).
+ */
+export async function assertApplicationRecordAccess(
+  account: SessionAccount,
+  record: { federationId: string | null; personId: string | null },
+): Promise<void> {
+  if (account.role === 'super_admin') {
+    return;
+  }
+
+  if (account.role === 'athlete') {
+    if (!account.person_id || account.person_id !== record.personId) {
+      throw new AuthError(403, 'forbidden');
+    }
+    return;
+  }
+
+  const federationIds = await getAccessibleFederationIds(account);
+  if (!record.federationId || !federationIds?.includes(record.federationId)) {
+    throw new AuthError(403, 'forbidden');
+  }
+}
