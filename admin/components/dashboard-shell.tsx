@@ -1,8 +1,8 @@
 'use client'
 
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   LayoutDashboard,
   FileText,
@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { BrandLogo } from '@/components/brand-logo'
+import { getCurrentAccount, logout } from '@/lib/auth'
 
 const nav = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
@@ -32,6 +33,12 @@ const nav = [
 
 function NavContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname()
+  const router = useRouter()
+
+  async function handleLogout() {
+    await logout()
+    router.replace('/login')
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -77,6 +84,7 @@ function NavContent({ onNavigate }: { onNavigate?: () => void }) {
         </div>
         <button
           type="button"
+          onClick={handleLogout}
           className="mt-1 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <LogOut className="size-4" />
@@ -88,7 +96,39 @@ function NavContent({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname()
+  const router = useRouter()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [authorized, setAuthorized] = useState(false)
+
+  const isLoginPage = pathname === '/login'
+
+  useEffect(() => {
+    if (isLoginPage) return
+
+    let cancelled = false
+
+    getCurrentAccount().then((account) => {
+      if (cancelled) return
+      if (account) {
+        setAuthorized(true)
+      } else {
+        router.replace('/login')
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isLoginPage, router])
+
+  if (isLoginPage) {
+    return <>{children}</>
+  }
+
+  if (!authorized) {
+    return <div className="min-h-screen bg-background" />
+  }
 
   return (
     <div className="flex min-h-screen bg-background">
