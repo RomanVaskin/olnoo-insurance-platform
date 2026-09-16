@@ -10,6 +10,7 @@ import {
   BadgeCheck,
   FileOutput,
   FileStack,
+  FileScan,
   Inbox,
   Users,
   Building2,
@@ -35,6 +36,7 @@ const nav = [
   { label: 'Генератор PDF', href: '/pdf-generator', icon: FileOutput },
   { label: 'Шаблоны', href: '/templates', icon: FileStack },
   { label: 'Заявки', href: '/applications', icon: Inbox },
+  { label: 'Документы', href: '/documents', icon: FileScan },
   { label: 'Платежи', href: '/payments', icon: Wallet },
   { label: 'Настройки', href: '/settings', icon: Settings },
 ]

@@ -22,9 +22,18 @@ export async function fetchDashboard(): Promise<DashboardData> {
 export class ApiError extends Error {
   status: number
 
-  constructor(status: number) {
-    super(`Request failed with status ${status}`)
+  constructor(status: number, message?: string) {
+    super(message || `Request failed with status ${status}`)
     this.status = status
+  }
+}
+
+async function apiErrorFromResponse(res: Response): Promise<ApiError> {
+  try {
+    const body = (await res.json()) as { message?: string; error?: string }
+    return new ApiError(res.status, body.message || body.error)
+  } catch {
+    return new ApiError(res.status)
   }
 }
 
@@ -416,6 +425,82 @@ export async function fetchProduct(id: string): Promise<ProductDetail> {
 
   if (!res.ok) {
     throw new ApiError(res.status)
+  }
+
+  return res.json()
+}
+
+export type DocumentType = 'passport' | 'birth_certificate'
+
+export type OcrExtractedData = {
+  documentType: string
+  lastName: string
+  firstName: string
+  middleName: string
+  birthDate: string
+  birthPlace: string
+  gender: string
+  passportSeries: string
+  passportNumber: string
+  issueDate: string
+  issuedBy: string
+  departmentCode: string
+}
+
+export type DocumentRecord = {
+  id: string
+  person_id: string
+  application_id: string | null
+  type: string
+  status: string
+  extracted_data: OcrExtractedData | null
+  created_at: string
+}
+
+export async function recognizeDocument(file: File): Promise<OcrExtractedData> {
+  const form = new FormData()
+  form.append('file', file)
+
+  const res = await fetch('/api/documents/recognize', {
+    method: 'POST',
+    credentials: 'include',
+    body: form,
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  const body = (await res.json()) as { data: OcrExtractedData }
+  return body.data
+}
+
+export async function createDocument(params: {
+  file: File
+  type: DocumentType
+  personId: string
+  applicationId?: string | null
+  extractedData?: OcrExtractedData | null
+}): Promise<DocumentRecord> {
+  const form = new FormData()
+  form.append('file', params.file)
+  form.append('type', params.type)
+  form.append('person_id', params.personId)
+  if (params.applicationId) {
+    form.append('application_id', params.applicationId)
+  }
+  if (params.extractedData) {
+    form.append('extracted_data', JSON.stringify(params.extractedData))
+  }
+
+  const res = await fetch('/api/documents', {
+    method: 'POST',
+    credentials: 'include',
+    body: form,
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
   }
 
   return res.json()
