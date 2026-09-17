@@ -110,6 +110,43 @@ export async function getYookassaPayment(providerPaymentId: string): Promise<Yoo
   return parseResponse(response);
 }
 
+export interface YookassaAccountInfo {
+  account_id?: string;
+  test?: boolean;
+  status?: string;
+}
+
+/**
+ * Calls GET /v3/me — YooKassa's read-only account-info endpoint, the standard
+ * way to verify shop credentials without creating or touching any payment.
+ */
+export async function getYookassaAccountInfo(): Promise<YookassaAccountInfo> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/me`, {
+      method: 'GET',
+      headers: { Authorization: authHeader() },
+    });
+  } catch (error) {
+    throw new YookassaError(`yookassa_unreachable: ${(error as Error).message}`);
+  }
+
+  const raw = await response.text();
+  let body: (YookassaAccountInfo & { description?: string }) | undefined;
+  try {
+    body = raw ? JSON.parse(raw) : undefined;
+  } catch {
+    throw new YookassaError(`yookassa_invalid_response: ${raw.slice(0, 500)}`);
+  }
+
+  if (!response.ok || !body) {
+    const detail = body?.description ? body.description : `http_${response.status}`;
+    throw new YookassaError(detail);
+  }
+
+  return body;
+}
+
 /** Maps a YooKassa payment status to this platform's payments.status values. */
 export function mapYookassaStatus(status: YookassaPaymentStatus): 'pending' | 'paid' | 'cancelled' {
   if (status === 'succeeded') {

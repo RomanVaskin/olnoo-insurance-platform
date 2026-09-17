@@ -457,6 +457,44 @@ export type DocumentRecord = {
   created_at: string
 }
 
+export type PaymentSettings = {
+  provider: string
+  configured: boolean
+  shop_id_masked: string | null
+  secret_key_configured: boolean
+  mode: string
+  webhook_configured: boolean
+}
+
+export type PaymentSettingsTestResult =
+  | { ok: true; account_id: string | null; test_mode: boolean | null }
+  | { ok: false; reason: string }
+
+export async function fetchPaymentSettings(): Promise<PaymentSettings> {
+  const res = await fetch('/api/settings/payments', {
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw new ApiError(res.status)
+  }
+
+  return res.json()
+}
+
+export async function testPaymentSettings(): Promise<PaymentSettingsTestResult> {
+  const res = await fetch('/api/settings/payments/test', {
+    method: 'POST',
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw new ApiError(res.status)
+  }
+
+  return res.json()
+}
+
 export async function recognizeDocument(file: File): Promise<OcrExtractedData> {
   const form = new FormData()
   form.append('file', file)
