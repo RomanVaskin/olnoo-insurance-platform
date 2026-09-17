@@ -1,19 +1,12 @@
 import type { FastifyRequest } from 'fastify';
 import { pool } from '../../db/pool';
 import { SESSION_COOKIE_NAME, getAccountBySessionToken, type SessionAccount } from './session';
+import { getAccessibleCategories } from './insurance-access';
+import { AuthError } from './errors';
+
+export { AuthError };
 
 export type FederationRole = 'secretary' | 'director';
-
-export class AuthError extends Error {
-  statusCode: number;
-  code: string;
-
-  constructor(statusCode: number, code: string) {
-    super(code);
-    this.statusCode = statusCode;
-    this.code = code;
-  }
-}
 
 /** Resolves the authenticated account from the session cookie, or throws 401. */
 export async function authenticate(request: FastifyRequest): Promise<SessionAccount> {
@@ -46,7 +39,10 @@ export async function requireFederationMembership(
   account: SessionAccount,
   federationId: string,
 ): Promise<FederationRole> {
-  if (account.role === 'super_admin') {
+  // 'admin' isn't federation-scoped at all (it's scoped by insurance type instead) — it
+  // gets the same full access here as super_admin; callers that need to further restrict
+  // it by category (e.g. federations.ts's assigned_products) do so separately.
+  if (account.role === 'super_admin' || account.role === 'admin') {
     return 'director';
   }
 
@@ -92,11 +88,13 @@ export function requireOwnPerson(account: SessionAccount, personId: string): voi
 /**
  * Read-API collection guard: super_admin sees everything (returns null = no filter),
  * federation_secretary/federation_director are scoped to the federations they belong
- * to (returns their federation_id list, possibly empty). Any other role (athlete,
- * guardian) is denied outright with 403.
+ * to (returns their federation_id list, possibly empty). 'admin' is not federation-scoped
+ * at all — it's restricted by insurance type instead (see modules/auth/insurance-access.ts),
+ * so it is treated as unrestricted on this dimension, same as super_admin. Any other role
+ * (athlete, guardian) is denied outright with 403.
  */
 export async function getAccessibleFederationIds(account: SessionAccount): Promise<string[] | null> {
-  if (account.role === 'super_admin') {
+  if (account.role === 'super_admin' || account.role === 'admin') {
     return null;
   }
 
@@ -114,18 +112,20 @@ export async function getAccessibleFederationIds(account: SessionAccount): Promi
 
 /** Whether the account may see federation-level financial aggregates (paid_amount_kopecks, policy_count, application_count). */
 export function isFinanceAllowed(role: string): boolean {
-  return role === 'super_admin' || role === 'federation_director';
+  return role === 'super_admin' || role === 'federation_director' || role === 'admin';
 }
 
 /**
- * Per-record access rule shared by the applications/payments read and write
- * routes: super_admin sees everything, an athlete may access only a record
- * belonging to their own person_id, federation staff are scoped to their
- * federations (unchanged behavior, via getAccessibleFederationIds).
+ * Per-record access rule shared by the applications/payments/policies read and write
+ * routes: super_admin sees everything, an athlete may access only a record belonging
+ * to their own person_id, federation staff are scoped to their federations (unchanged
+ * behavior, via getAccessibleFederationIds), and 'admin' is scoped to its assigned
+ * insurance types (via getAccessibleCategories) instead of any federation — callers
+ * must pass the record's product category for that branch to work.
  */
 export async function assertApplicationRecordAccess(
   account: SessionAccount,
-  record: { federationId: string | null; personId: string | null },
+  record: { federationId: string | null; personId: string | null; category?: string | null },
 ): Promise<void> {
   if (account.role === 'super_admin') {
     return;
@@ -133,6 +133,14 @@ export async function assertApplicationRecordAccess(
 
   if (account.role === 'athlete') {
     if (!account.person_id || account.person_id !== record.personId) {
+      throw new AuthError(403, 'forbidden');
+    }
+    return;
+  }
+
+  if (account.role === 'admin') {
+    const categories = await getAccessibleCategories(account);
+    if (categories !== null && (!record.category || !categories.includes(record.category))) {
       throw new AuthError(403, 'forbidden');
     }
     return;

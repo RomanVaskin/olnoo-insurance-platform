@@ -18,7 +18,7 @@ type LoadState = 'loading' | 'ready' | 'forbidden' | 'error'
 
 // Only these roles can be created/edited from this page — athlete/guardian accounts
 // stay under Athletes CRUD and are shown here read-only, for visibility only.
-const MANAGED_ROLES = ['super_admin', 'federation_secretary', 'federation_director']
+const MANAGED_ROLES = ['super_admin', 'admin', 'federation_secretary', 'federation_director']
 
 export default function Page() {
   const router = useRouter()

@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { pool } from '../db/pool';
 import { authenticate, getAccessibleFederationIds, requireRole } from '../modules/auth/guards';
+import { getAccessibleCategories, getFederationIdsForCategories } from '../modules/auth/insurance-access';
+import type { SessionAccount } from '../modules/auth/session';
 import { assertUuid, BadRequestError, NotFoundError, HttpError, toNumber, toNullableNumber } from '../lib/api-helpers';
 import { federationSummary, productSummary } from '../lib/mappers';
 
@@ -183,10 +185,26 @@ function mapAthleteRow(row: Record<string, unknown>) {
   };
 }
 
+/**
+ * Federation-id filter for the athlete list/detail queries. Athletes have no category
+ * of their own — an 'admin' account's visibility is derived from which federations have
+ * a qualifying product (getFederationIdsForCategories), layered on top of the ordinary
+ * getAccessibleFederationIds result (null for super_admin/admin, a real list for
+ * federation staff, throws for athlete/guardian).
+ */
+async function resolveAthleteFederationFilter(account: SessionAccount): Promise<string[] | null> {
+  const federationIds = await getAccessibleFederationIds(account);
+  if (account.role !== 'admin') {
+    return federationIds;
+  }
+  const categories = await getAccessibleCategories(account);
+  return getFederationIdsForCategories(categories as string[]);
+}
+
 export async function athletesRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/athletes', async (request, reply) => {
     const account = await authenticate(request);
-    const federationIds = await getAccessibleFederationIds(account);
+    const federationIds = await resolveAthleteFederationFilter(account);
 
     const result = await pool.query(
       `${LIST_SELECT}
@@ -213,7 +231,7 @@ export async function athletesRoutes(app: FastifyInstance): Promise<void> {
       throw new NotFoundError('person_not_found');
     }
 
-    const federationIds = await getAccessibleFederationIds(account);
+    const federationIds = await resolveAthleteFederationFilter(account);
 
     const membershipResult = await pool.query(
       `SELECT fm.club, fm.coach, fm.grade, fm.weight, fm.sport_name, fm.status,

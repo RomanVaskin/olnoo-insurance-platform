@@ -51,8 +51,20 @@ const federationDirectorNav: NavItem[] = [
   { label: 'Платежи', href: '/payments', icon: Wallet },
 ]
 
+// 'admin' is scoped by insurance type (enforced server-side), not by federation — it has
+// no access to Athletes/Federations/Documents/Users/Import/Settings at all (see
+// src/routes/*.ts guards), so those never appear here regardless of which types it holds.
+const adminNav: NavItem[] = [
+  { label: 'Обзор', href: '/dashboard', icon: LayoutDashboard },
+  { label: 'Заявки', href: '/applications', icon: Inbox },
+  { label: 'Полисы', href: '/policies', icon: FileText },
+  { label: 'Страховые продукты', href: '/products', icon: PackageSearch },
+  { label: 'Платежи', href: '/payments', icon: Wallet },
+]
+
 export function getNavForRole(role: string | null | undefined): NavItem[] {
   if (role === 'federation_secretary') return federationSecretaryNav
   if (role === 'federation_director') return federationDirectorNav
+  if (role === 'admin') return adminNav
   return superAdminNav
 }

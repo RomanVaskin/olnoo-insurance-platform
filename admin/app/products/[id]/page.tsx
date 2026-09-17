@@ -58,7 +58,10 @@ export default function Page() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
   const account = useAccount()
-  const isSuperAdmin = account?.role === 'super_admin'
+  // Kept as `isSuperAdmin` (not renamed) to minimize the diff — 'admin' is also allowed
+  // to write here; the backend enforces per-category 'manage' permission regardless of
+  // what this flag shows client-side.
+  const isSuperAdmin = account?.role === 'super_admin' || account?.role === 'admin'
   const [product, setProduct] = useState<ProductDetail | null>(null)
   const [federations, setFederations] = useState<Federation[]>([])
   const [state, setState] = useState<LoadState>('loading')

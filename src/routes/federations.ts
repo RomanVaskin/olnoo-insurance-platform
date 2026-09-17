@@ -2,21 +2,29 @@ import type { FastifyInstance } from 'fastify';
 import { pool } from '../db/pool';
 import {
   authenticate,
+  AuthError,
   getAccessibleFederationIds,
   isFinanceAllowed,
   requireFederationMembership,
   requireRole,
 } from '../modules/auth/guards';
+import { getAccessibleCategories, getFederationIdsForCategories } from '../modules/auth/insurance-access';
 import { assertUuid, BadRequestError, NotFoundError, toNumber } from '../lib/api-helpers';
 
+// $2::text[] is the caller's accessible insurance types (NULL = unrestricted); only
+// 'admin' ever passes a non-null value here — everyone else's financial aggregates are
+// federation-scoped only, unaffected by category.
 const LIST_SELECT = `
   SELECT
     f.id, f.name, f.slug, f.status,
     (SELECT count(*) FROM federation_memberships fm WHERE fm.federation_id = f.id) AS athlete_count,
-    (SELECT count(*) FROM policies pol WHERE pol.federation_id = f.id) AS policy_count,
+    (SELECT count(*) FROM policies pol JOIN insurance_products ip ON ip.id = pol.product_id
+       WHERE pol.federation_id = f.id AND ($2::text[] IS NULL OR ip.category = ANY($2::text[]))) AS policy_count,
     (SELECT COALESCE(sum(pay.amount_kopecks), 0) FROM payments pay
        JOIN applications a ON a.id = pay.application_id
-       WHERE a.federation_id = f.id AND pay.status = 'paid') AS paid_amount_kopecks
+       JOIN insurance_products ip ON ip.id = a.product_id
+       WHERE a.federation_id = f.id AND pay.status = 'paid'
+         AND ($2::text[] IS NULL OR ip.category = ANY($2::text[]))) AS paid_amount_kopecks
   FROM federations f
 `;
 
@@ -67,14 +75,19 @@ function isUniqueViolation(error: unknown): boolean {
 export async function federationsRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/federations', async (request, reply) => {
     const account = await authenticate(request);
-    const federationIds = await getAccessibleFederationIds(account);
+    const categories = await getAccessibleCategories(account);
+    // Federations have no category of their own — an 'admin' account only sees
+    // federations that have at least one product assignment in its assigned types
+    // (categories !== null implies account.role === 'admin' here).
+    const federationIds =
+      categories !== null ? await getFederationIdsForCategories(categories) : await getAccessibleFederationIds(account);
     const showFinance = isFinanceAllowed(account.role);
 
     const result = await pool.query(
       `${LIST_SELECT}
        WHERE ($1::uuid[] IS NULL OR f.id = ANY($1::uuid[]))
        ORDER BY f.name`,
-      [federationIds],
+      [federationIds, categories],
     );
 
     const response = result.rows.map((row) => {
@@ -109,9 +122,20 @@ export async function federationsRoutes(app: FastifyInstance): Promise<void> {
       throw new NotFoundError('federation_not_found');
     }
 
-    // Throws 403 if the account is not super_admin and not a member of this federation.
+    // Throws 403 if the account is not super_admin/admin and not a member of this federation.
     const membershipRole = await requireFederationMembership(account, federationId);
-    const showFinance = account.role === 'super_admin' || membershipRole === 'director';
+    const showFinance = account.role === 'super_admin' || account.role === 'admin' || membershipRole === 'director';
+    const categories = await getAccessibleCategories(account);
+
+    // requireFederationMembership above lets 'admin' through unconditionally (it isn't
+    // federation-scoped) — this is the actual insurance-type check for that role: the
+    // federation must have at least one product in one of its assigned categories.
+    if (categories !== null) {
+      const eligibleFederationIds = await getFederationIdsForCategories(categories);
+      if (!eligibleFederationIds.includes(federationId)) {
+        throw new AuthError(403, 'forbidden');
+      }
+    }
 
     const [usersResult, athletesResult, productsResult, athleteCountResult, aggregatesResult] = await Promise.all([
       pool.query(
@@ -144,21 +168,25 @@ export async function federationsRoutes(app: FastifyInstance): Promise<void> {
                 ip.id AS product_id, ip.name AS product_name, ip.category AS product_category
          FROM federation_products fp
          JOIN insurance_products ip ON ip.id = fp.product_id
-         WHERE fp.federation_id = $1
+         WHERE fp.federation_id = $1 AND ($2::text[] IS NULL OR ip.category = ANY($2::text[]))
          ORDER BY fp.created_at DESC`,
-        [federationId],
+        [federationId, categories],
       ),
       pool.query(`SELECT count(*) AS athlete_count FROM federation_memberships WHERE federation_id = $1`, [
         federationId,
       ]),
       pool.query(
         `SELECT
-           (SELECT count(*) FROM applications WHERE federation_id = $1) AS application_count,
-           (SELECT count(*) FROM policies WHERE federation_id = $1) AS policy_count,
+           (SELECT count(*) FROM applications a JOIN insurance_products ip ON ip.id = a.product_id
+              WHERE a.federation_id = $1 AND ($2::text[] IS NULL OR ip.category = ANY($2::text[]))) AS application_count,
+           (SELECT count(*) FROM policies pol JOIN insurance_products ip ON ip.id = pol.product_id
+              WHERE pol.federation_id = $1 AND ($2::text[] IS NULL OR ip.category = ANY($2::text[]))) AS policy_count,
            (SELECT COALESCE(sum(pay.amount_kopecks), 0) FROM payments pay
               JOIN applications a ON a.id = pay.application_id
-              WHERE a.federation_id = $1 AND pay.status = 'paid') AS paid_amount_kopecks`,
-        [federationId],
+              JOIN insurance_products ip ON ip.id = a.product_id
+              WHERE a.federation_id = $1 AND pay.status = 'paid'
+                AND ($2::text[] IS NULL OR ip.category = ANY($2::text[]))) AS paid_amount_kopecks`,
+        [federationId, categories],
       ),
     ]);
 

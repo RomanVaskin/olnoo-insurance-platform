@@ -6,10 +6,11 @@ export type Account = {
 }
 
 export const ROLE_LABELS: Record<string, string> = {
-  federation_secretary: 'Секретарь федерации',
+  super_admin: 'Супер-админ',
+  admin: 'Админ',
   federation_director: 'Руководитель федерации',
-  super_admin: 'Администратор',
-  athlete: 'Спортсмен',
+  federation_secretary: 'Секретарь федерации',
+  athlete: 'Пользователь',
   guardian: 'Опекун',
 }
 

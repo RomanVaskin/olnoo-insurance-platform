@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { pool } from '../db/pool';
-import { authenticate, getAccessibleFederationIds, requireRole } from '../modules/auth/guards';
+import { authenticate, getAccessibleFederationIds, AuthError } from '../modules/auth/guards';
+import { getAccessibleCategories, requireCategoryManage } from '../modules/auth/insurance-access';
 import { assertUuid, BadRequestError, NotFoundError, toNumber, toNullableNumber } from '../lib/api-helpers';
 
 const LIST_SELECT = `
@@ -103,20 +104,30 @@ export async function productsRoutes(app: FastifyInstance): Promise<void> {
     // Products aren't federation-owned, but this still excludes roles (athlete, guardian)
     // that have no business browsing the admin catalog, consistent with the other list routes.
     await getAccessibleFederationIds(account);
+    // 'admin' only sees products within its assigned insurance types; everyone else unrestricted.
+    const categories = await getAccessibleCategories(account);
 
-    const result = await pool.query(`${LIST_SELECT} ORDER BY name`);
+    const result = await pool.query(
+      `${LIST_SELECT} WHERE ($1::text[] IS NULL OR category = ANY($1::text[])) ORDER BY name`,
+      [categories],
+    );
     return reply.status(200).send(result.rows.map(mapProductRow));
   });
 
   app.get<{ Params: { id: string } }>('/api/products/:id', async (request, reply) => {
     const account = await authenticate(request);
     const federationIds = await getAccessibleFederationIds(account);
+    const categories = await getAccessibleCategories(account);
     assertUuid(request.params.id);
 
     const productResult = await pool.query(`${LIST_SELECT} WHERE id = $1`, [request.params.id]);
     const product = productResult.rows[0];
     if (!product) {
       throw new NotFoundError('product_not_found');
+    }
+
+    if (categories !== null && !categories.includes(product.category as string)) {
+      throw new AuthError(403, 'forbidden');
     }
 
     const assignmentsResult = await pool.query(
@@ -152,11 +163,13 @@ export async function productsRoutes(app: FastifyInstance): Promise<void> {
     };
   }>('/api/products', async (request, reply) => {
     const account = await authenticate(request);
-    requireRole(account, ['super_admin']);
 
     const body = request.body ?? {};
     const name = assertProductName(body.name);
     const category = assertProductCategory(body.category);
+    // super_admin always passes; 'admin' needs 'manage' on this specific category;
+    // every other role (federation staff, athlete) is denied.
+    await requireCategoryManage(account, category);
     const insurerName = body.insurer_name === undefined ? null : assertInsurerName(body.insurer_name);
     const coverageAmount =
       body.coverage_amount_kopecks === undefined
@@ -190,8 +203,17 @@ export async function productsRoutes(app: FastifyInstance): Promise<void> {
     };
   }>('/api/products/:id', async (request, reply) => {
     const account = await authenticate(request);
-    requireRole(account, ['super_admin']);
     assertUuid(request.params.id);
+
+    const existingResult = await pool.query<{ category: string }>(`SELECT category FROM insurance_products WHERE id = $1`, [
+      request.params.id,
+    ]);
+    const existingProduct = existingResult.rows[0];
+    if (!existingProduct) {
+      throw new NotFoundError('product_not_found');
+    }
+    // Manage access on the product's *current* category is always required.
+    await requireCategoryManage(account, existingProduct.category);
 
     const body = request.body ?? {};
     const updates: string[] = [];
@@ -202,7 +224,13 @@ export async function productsRoutes(app: FastifyInstance): Promise<void> {
       updates.push(`name = $${values.length}`);
     }
     if (body.category !== undefined) {
-      values.push(assertProductCategory(body.category));
+      const newCategory = assertProductCategory(body.category);
+      if (newCategory !== existingProduct.category) {
+        // Also require manage access on the *new* category — an admin must not be able
+        // to move a product into a category they don't manage (or out of one they do).
+        await requireCategoryManage(account, newCategory);
+      }
+      values.push(newCategory);
       updates.push(`category = $${values.length}`);
     }
     if (body.insurer_name !== undefined) {
@@ -258,14 +286,17 @@ export async function productsRoutes(app: FastifyInstance): Promise<void> {
     Body: { federation_id?: unknown; price_kopecks?: unknown; active?: unknown };
   }>('/api/products/:id/federations', async (request, reply) => {
     const account = await authenticate(request);
-    requireRole(account, ['super_admin']);
     assertUuid(request.params.id);
 
     const productId = request.params.id;
-    const productExists = await pool.query(`SELECT 1 FROM insurance_products WHERE id = $1`, [productId]);
-    if (productExists.rowCount === 0) {
+    const productResult = await pool.query<{ category: string }>(`SELECT category FROM insurance_products WHERE id = $1`, [
+      productId,
+    ]);
+    const productRow = productResult.rows[0];
+    if (!productRow) {
       throw new NotFoundError('product_not_found');
     }
+    await requireCategoryManage(account, productRow.category);
 
     const body = request.body ?? {};
     if (typeof body.federation_id !== 'string') {
@@ -323,9 +354,17 @@ export async function productsRoutes(app: FastifyInstance): Promise<void> {
     Body: { price_kopecks?: unknown; active?: unknown };
   }>('/api/products/:id/federations/:federationId', async (request, reply) => {
     const account = await authenticate(request);
-    requireRole(account, ['super_admin']);
     assertUuid(request.params.id);
     assertUuid(request.params.federationId);
+
+    const productResult = await pool.query<{ category: string }>(`SELECT category FROM insurance_products WHERE id = $1`, [
+      request.params.id,
+    ]);
+    const productRow = productResult.rows[0];
+    if (!productRow) {
+      throw new NotFoundError('product_not_found');
+    }
+    await requireCategoryManage(account, productRow.category);
 
     const body = request.body ?? {};
     const priceKopecks =
@@ -383,9 +422,17 @@ export async function productsRoutes(app: FastifyInstance): Promise<void> {
     '/api/products/:id/federations/:federationId',
     async (request, reply) => {
       const account = await authenticate(request);
-      requireRole(account, ['super_admin']);
       assertUuid(request.params.id);
       assertUuid(request.params.federationId);
+
+      const productResult = await pool.query<{ category: string }>(`SELECT category FROM insurance_products WHERE id = $1`, [
+        request.params.id,
+      ]);
+      const productRow = productResult.rows[0];
+      if (!productRow) {
+        throw new NotFoundError('product_not_found');
+      }
+      await requireCategoryManage(account, productRow.category);
 
       const result = await pool.query(
         `UPDATE federation_products

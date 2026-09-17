@@ -622,9 +622,9 @@ export async function removeProductFederationAssignment(
   return res.json()
 }
 
-// Users & Roles — manages platform staff accounts (super_admin, federation_secretary,
-// federation_director) only. Athlete/guardian accounts are never created or edited here;
-// see Athletes CRUD (fetchAthletes/fetchAthlete) for those.
+// Users & Roles — manages platform staff accounts (super_admin, admin,
+// federation_secretary, federation_director) only. Athlete/guardian accounts are never
+// created or edited here; see Athletes CRUD (fetchAthletes/fetchAthlete) for those.
 export type UserPersonSummary = {
   id: string
   last_name: string
@@ -638,6 +638,12 @@ export type UserFederationAssignment = {
   role: string
 } | null
 
+// 'Доступ к видам страхования' in the UI — never call this "scope" in user-facing text.
+export type InsuranceAccessGrant = {
+  insurance_type: string
+  permission: 'read' | 'manage'
+}
+
 export type PlatformUser = {
   id: string
   email: string | null
@@ -646,6 +652,7 @@ export type PlatformUser = {
   status: string
   person: UserPersonSummary | null
   federation: UserFederationAssignment
+  insurance_access: InsuranceAccessGrant[]
   created_at: string
   updated_at: string
 }
@@ -680,6 +687,8 @@ export type CreateUserInput = {
   role: string
   password: string
   federation_id?: string
+  /** Required (>=1 entry) when role === 'admin'. */
+  insurance_access?: InsuranceAccessGrant[]
 }
 
 export async function createUser(input: CreateUserInput): Promise<PlatformUser> {
@@ -726,6 +735,57 @@ export async function resetUserPassword(id: string, password: string): Promise<{
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ password }),
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
+// 'Доступ к видам страхования' management for role === 'admin' users only.
+export async function grantUserInsuranceAccess(
+  id: string,
+  grant: InsuranceAccessGrant,
+): Promise<PlatformUser> {
+  const res = await fetch(`/api/users/${id}/insurance-access`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(grant),
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
+export async function updateUserInsuranceAccess(
+  id: string,
+  insuranceType: string,
+  permission: 'read' | 'manage',
+): Promise<PlatformUser> {
+  const res = await fetch(`/api/users/${id}/insurance-access/${insuranceType}`, {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ permission }),
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
+export async function revokeUserInsuranceAccess(id: string, insuranceType: string): Promise<PlatformUser> {
+  const res = await fetch(`/api/users/${id}/insurance-access/${insuranceType}`, {
+    method: 'DELETE',
+    credentials: 'include',
   })
 
   if (!res.ok) {
@@ -795,6 +855,141 @@ export async function testPaymentSettings(): Promise<PaymentSettingsTestResult> 
 
   if (!res.ok) {
     throw new ApiError(res.status)
+  }
+
+  return res.json()
+}
+
+// Payment profiles (payment_accounts) — super_admin only. Secret values are never
+// returned by the backend; only `secret_configured` and a masked shop id.
+export type PaymentAccount = {
+  id: string
+  provider: string
+  name: string
+  shop_id_masked: string
+  secret_configured: boolean
+  status: string
+  created_at: string
+  updated_at: string
+}
+
+export async function fetchPaymentAccounts(): Promise<PaymentAccount[]> {
+  const res = await fetch('/api/settings/payment-accounts', {
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw new ApiError(res.status)
+  }
+
+  return res.json()
+}
+
+export type CreatePaymentAccountInput = {
+  provider: 'yookassa'
+  name: string
+  shop_id: string
+  secret_key?: string
+  status?: string
+}
+
+export async function createPaymentAccount(input: CreatePaymentAccountInput): Promise<PaymentAccount> {
+  const res = await fetch('/api/settings/payment-accounts', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
+export type UpdatePaymentAccountInput = {
+  name?: string
+  shop_id?: string
+  secret_key?: string
+  status?: string
+}
+
+export async function updatePaymentAccount(
+  id: string,
+  input: UpdatePaymentAccountInput,
+): Promise<PaymentAccount> {
+  const res = await fetch(`/api/settings/payment-accounts/${id}`, {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
+// Payment routing (payment_routing) — precedence product > federation > insurance_type
+// > default, purely from which target the rule names. super_admin only.
+export type PaymentRoutingTarget =
+  | { level: 'product'; product: { id: string; name: string } }
+  | { level: 'federation'; federation: { id: string; name: string } }
+  | { level: 'insurance_type'; insurance_type: string }
+  | { level: 'default' }
+
+export type PaymentRoutingRule = {
+  id: string
+  payment_account: { id: string; name: string }
+  target: PaymentRoutingTarget
+  created_at: string
+}
+
+export async function fetchPaymentRouting(): Promise<PaymentRoutingRule[]> {
+  const res = await fetch('/api/settings/payment-routing', {
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw new ApiError(res.status)
+  }
+
+  return res.json()
+}
+
+export type CreatePaymentRoutingInput = {
+  payment_account_id: string
+  insurance_type?: string
+  federation_id?: string
+  product_id?: string
+}
+
+export async function createPaymentRouting(input: CreatePaymentRoutingInput): Promise<{ id: string }> {
+  const res = await fetch('/api/settings/payment-routing', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
+export async function deletePaymentRouting(id: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/settings/payment-routing/${id}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
   }
 
   return res.json()

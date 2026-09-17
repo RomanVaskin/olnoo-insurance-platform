@@ -52,7 +52,7 @@ export default function Page() {
         title="Страховые продукты"
         description="Каталог страховых продуктов платформы"
         action={
-          account?.role === 'super_admin' ? (
+          account?.role === 'super_admin' || account?.role === 'admin' ? (
             <Button size="lg" onClick={() => setCreateOpen(true)}>
               <Plus className="size-4" />
               Создать продукт
@@ -60,7 +60,7 @@ export default function Page() {
           ) : undefined
         }
       />
-      {account?.role === 'super_admin' ? (
+      {account?.role === 'super_admin' || account?.role === 'admin' ? (
         <ProductFormDialog open={createOpen} onOpenChange={setCreateOpen} onSaved={() => load()} />
       ) : null}
       <div className="px-6 py-8 lg:px-10">

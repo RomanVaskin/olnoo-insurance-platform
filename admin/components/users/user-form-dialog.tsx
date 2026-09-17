@@ -10,15 +10,27 @@ import {
   updateUser,
   type CreateUserInput,
   type Federation,
+  type InsuranceAccessGrant,
   type PlatformUser,
 } from '@/lib/api'
 
 const inputClass =
   'h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none transition-colors hover:border-foreground/30 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50'
 
-// This subsystem only ever manages these three roles — athlete/guardian accounts
+// This subsystem only ever manages these four roles — athlete/guardian accounts
 // belong to Athletes CRUD and are never created or edited here.
-const MANAGED_ROLES = ['super_admin', 'federation_secretary', 'federation_director'] as const
+const MANAGED_ROLES = ['super_admin', 'admin', 'federation_secretary', 'federation_director'] as const
+
+// Mirrors insurance_products.category / admin_insurance_access.insurance_type.
+const INSURANCE_TYPE_LABELS: Record<string, string> = {
+  sport: 'Спортивное страхование',
+  travel: 'Туристическое страхование',
+  health: 'Страхование здоровья',
+  auto: 'Автострахование',
+  property: 'Страхование недвижимости',
+  business: 'Страхование бизнеса',
+}
+const PERMISSION_LABELS: Record<string, string> = { read: 'Просмотр', manage: 'Управление' }
 
 // Mirrors the error codes the backend returns for POST/PATCH /api/users
 // (see src/routes/users.ts).
@@ -37,6 +49,11 @@ const ERROR_MESSAGES: Record<string, string> = {
   no_fields_to_update: 'Нет изменений для сохранения.',
   cannot_change_own_role: 'Нельзя изменить свою собственную роль.',
   unsupported_role: 'Этот аккаунт управляется в разделе «Спортсмены», а не здесь.',
+  insurance_access_required: 'Добавьте хотя бы один вид страхования.',
+  invalid_insurance_type: 'Недопустимый вид страхования.',
+  invalid_permission: 'Недопустимое право доступа.',
+  duplicate_insurance_type: 'Этот вид страхования уже добавлен.',
+  insurance_access_not_allowed_for_role: 'Доступ к видам страхования указывается только для роли «Админ».',
   forbidden: 'Недостаточно прав для этого действия.',
 }
 
@@ -75,6 +92,7 @@ export function UserFormDialog({
   const [status, setStatus] = useState('active')
   const [federationId, setFederationId] = useState('')
   const [password, setPassword] = useState('')
+  const [insuranceAccess, setInsuranceAccess] = useState<Record<string, InsuranceAccessGrant['permission'] | null>>({})
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -86,6 +104,7 @@ export function UserFormDialog({
       setStatus(user?.status ?? 'active')
       setFederationId(user?.federation?.id ?? '')
       setPassword('')
+      setInsuranceAccess({})
       setError(null)
       setSubmitting(false)
     }
@@ -93,6 +112,12 @@ export function UserFormDialog({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+
+    if (!isEdit && role === 'admin' && Object.values(insuranceAccess).every((p) => p === null)) {
+      setError(ERROR_MESSAGES.insurance_access_required)
+      return
+    }
+
     setSubmitting(true)
     setError(null)
 
@@ -120,6 +145,11 @@ export function UserFormDialog({
         }
         if (requiresFederation(role)) {
           input.federation_id = federationId
+        }
+        if (role === 'admin') {
+          input.insurance_access = Object.entries(insuranceAccess)
+            .filter((entry): entry is [string, InsuranceAccessGrant['permission']] => entry[1] !== null)
+            .map(([insurance_type, permission]) => ({ insurance_type, permission }))
         }
         const saved = await createUser(input)
         onSaved(saved)
@@ -181,6 +211,47 @@ export function UserFormDialog({
               ))}
             </select>
           </label>
+        ) : null}
+
+        {role === 'admin' && !isEdit ? (
+          <div className="block">
+            <span className="mb-2 block text-sm font-medium">Доступ к видам страхования</span>
+            <div className="space-y-2 rounded-lg border border-border p-3">
+              {Object.entries(INSURANCE_TYPE_LABELS).map(([type, label]) => {
+                const permission = insuranceAccess[type] ?? null
+                return (
+                  <div key={type} className="flex items-center justify-between gap-3">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={permission !== null}
+                        onChange={(e) =>
+                          setInsuranceAccess((prev) => ({ ...prev, [type]: e.target.checked ? 'read' : null }))
+                        }
+                        className="size-4 rounded border-border"
+                      />
+                      {label}
+                    </label>
+                    <select
+                      disabled={permission === null}
+                      value={permission ?? 'read'}
+                      onChange={(e) =>
+                        setInsuranceAccess((prev) => ({
+                          ...prev,
+                          [type]: e.target.value as InsuranceAccessGrant['permission'],
+                        }))
+                      }
+                      className={`${inputClass} w-40`}
+                    >
+                      <option value="read">{PERMISSION_LABELS.read}</option>
+                      <option value="manage">{PERMISSION_LABELS.manage}</option>
+                    </select>
+                  </div>
+                )
+              })}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">Отметьте хотя бы один вид страхования.</p>
+          </div>
         ) : null}
 
         {isEdit ? (

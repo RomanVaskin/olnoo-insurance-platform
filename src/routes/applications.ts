@@ -7,6 +7,7 @@ import {
   isFinanceAllowed,
   AuthError,
 } from '../modules/auth/guards';
+import { getAccessibleCategories } from '../modules/auth/insurance-access';
 import { assertUuid, NotFoundError, BadRequestError, toNumber } from '../lib/api-helpers';
 import { federationSummary, personSummary, productSummary } from '../lib/mappers';
 import { getLatestPaymentForApplication, getPolicyForApplication } from '../lib/related-queries';
@@ -16,7 +17,7 @@ const LIST_SELECT = `
     a.id, a.status, a.amount_kopecks, a.created_at, a.federation_id AS access_federation_id,
     p.id AS person_id, p.last_name AS person_last_name, p.first_name AS person_first_name, p.patronymic AS person_patronymic,
     f.id AS federation_id, f.name AS federation_name,
-    ip.id AS product_id, ip.name AS product_name
+    ip.id AS product_id, ip.name AS product_name, ip.category AS access_category
   FROM applications a
   JOIN persons p ON p.id = a.person_id
   LEFT JOIN federations f ON f.id = a.federation_id
@@ -53,13 +54,15 @@ export async function applicationsRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const federationIds = await getAccessibleFederationIds(account);
+    const categories = await getAccessibleCategories(account);
     const showAmount = isFinanceAllowed(account.role);
 
     const result = await pool.query(
       `${LIST_SELECT}
        WHERE ($1::uuid[] IS NULL OR a.federation_id = ANY($1::uuid[]))
+         AND ($2::text[] IS NULL OR ip.category = ANY($2::text[]))
        ORDER BY a.created_at DESC`,
-      [federationIds],
+      [federationIds, categories],
     );
 
     return reply.status(200).send(result.rows.map((row) => mapApplicationRow(row, showAmount)));
@@ -78,6 +81,7 @@ export async function applicationsRoutes(app: FastifyInstance): Promise<void> {
     await assertApplicationRecordAccess(account, {
       federationId: row.access_federation_id as string | null,
       personId: row.person_id as string | null,
+      category: row.access_category as string | null,
     });
 
     const [payment, policy] = await Promise.all([

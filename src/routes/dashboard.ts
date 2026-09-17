@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { pool } from '../db/pool';
 import { authenticate, getAccessibleFederationIds, isFinanceAllowed } from '../modules/auth/guards';
+import { getAccessibleCategories, getFederationIdsForCategories } from '../modules/auth/insurance-access';
 import { toNumber } from '../lib/api-helpers';
 
 interface DashboardRow {
@@ -15,20 +16,35 @@ interface DashboardRow {
 export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/dashboard', async (request, reply) => {
     const account = await authenticate(request);
-    const federationIds = await getAccessibleFederationIds(account);
+    const categories = await getAccessibleCategories(account);
+    // Federations/athletes have no category of their own — for 'admin' (categories
+    // !== null), total_federations/total_athletes are derived from which federations
+    // have a qualifying product, same rule as GET /api/federations and /api/athletes.
+    // Applications/policies/payments *do* have a product category directly, so those
+    // three (and the amount) are additionally filtered by $2 regardless of $1.
+    const federationIds =
+      categories !== null ? await getFederationIdsForCategories(categories) : await getAccessibleFederationIds(account);
 
     const result = await pool.query<DashboardRow>(
       `SELECT
         (SELECT count(*) FROM federations WHERE ($1::uuid[] IS NULL OR id = ANY($1::uuid[]))) AS total_federations,
         (SELECT count(DISTINCT person_id) FROM federation_memberships WHERE ($1::uuid[] IS NULL OR federation_id = ANY($1::uuid[]))) AS total_athletes,
-        (SELECT count(*) FROM applications WHERE ($1::uuid[] IS NULL OR federation_id = ANY($1::uuid[]))) AS total_applications,
-        (SELECT count(*) FROM policies WHERE ($1::uuid[] IS NULL OR federation_id = ANY($1::uuid[]))) AS total_policies,
-        (SELECT count(*) FROM policies WHERE status = 'active' AND ($1::uuid[] IS NULL OR federation_id = ANY($1::uuid[]))) AS active_policies,
+        (SELECT count(*) FROM applications a JOIN insurance_products ip ON ip.id = a.product_id
+           WHERE ($1::uuid[] IS NULL OR a.federation_id = ANY($1::uuid[]))
+             AND ($2::text[] IS NULL OR ip.category = ANY($2::text[]))) AS total_applications,
+        (SELECT count(*) FROM policies pol JOIN insurance_products ip ON ip.id = pol.product_id
+           WHERE ($1::uuid[] IS NULL OR pol.federation_id = ANY($1::uuid[]))
+             AND ($2::text[] IS NULL OR ip.category = ANY($2::text[]))) AS total_policies,
+        (SELECT count(*) FROM policies pol JOIN insurance_products ip ON ip.id = pol.product_id
+           WHERE pol.status = 'active' AND ($1::uuid[] IS NULL OR pol.federation_id = ANY($1::uuid[]))
+             AND ($2::text[] IS NULL OR ip.category = ANY($2::text[]))) AS active_policies,
         (SELECT COALESCE(sum(pay.amount_kopecks), 0) FROM payments pay
            JOIN applications a ON a.id = pay.application_id
-           WHERE pay.status = 'paid' AND ($1::uuid[] IS NULL OR a.federation_id = ANY($1::uuid[]))) AS paid_amount_kopecks
+           JOIN insurance_products ip ON ip.id = a.product_id
+           WHERE pay.status = 'paid' AND ($1::uuid[] IS NULL OR a.federation_id = ANY($1::uuid[]))
+             AND ($2::text[] IS NULL OR ip.category = ANY($2::text[]))) AS paid_amount_kopecks
       `,
-      [federationIds],
+      [federationIds, categories],
     );
 
     const row = result.rows[0];

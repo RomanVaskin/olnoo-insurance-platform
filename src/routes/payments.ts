@@ -2,19 +2,22 @@ import crypto from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { pool } from '../db/pool';
 import { authenticate, getAccessibleFederationIds, assertApplicationRecordAccess, isFinanceAllowed, AuthError } from '../modules/auth/guards';
+import { getAccessibleCategories } from '../modules/auth/insurance-access';
 import { assertUuid, NotFoundError, BadRequestError, toNumber } from '../lib/api-helpers';
 import { federationSummary, personSummary, productSummary } from '../lib/mappers';
 import { getPolicyForApplication } from '../lib/related-queries';
 import { createYookassaPayment, getYookassaPayment, mapYookassaStatus } from '../modules/payments/yookassa';
+import { resolvePaymentCredentials, getCredentialsForPaymentAccount } from '../modules/payments/routing';
 
 const LIST_SELECT = `
   SELECT
     pay.id, pay.application_id, pay.provider, pay.provider_payment_id,
     pay.amount_kopecks, pay.currency, pay.status, pay.paid_at, pay.created_at,
+    pay.payment_account_id,
     a.federation_id AS access_federation_id,
     p.id AS person_id, p.last_name AS person_last_name, p.first_name AS person_first_name, p.patronymic AS person_patronymic,
     f.id AS federation_id, f.name AS federation_name,
-    ip.id AS product_id, ip.name AS product_name,
+    ip.id AS product_id, ip.name AS product_name, ip.category AS access_category,
     pol.policy_number AS policy_number
   FROM payments pay
   JOIN applications a ON a.id = pay.application_id
@@ -54,12 +57,14 @@ export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const federationIds = await getAccessibleFederationIds(account);
+    const categories = await getAccessibleCategories(account);
 
     const result = await pool.query(
       `${LIST_SELECT}
        WHERE ($1::uuid[] IS NULL OR a.federation_id = ANY($1::uuid[]))
+         AND ($2::text[] IS NULL OR ip.category = ANY($2::text[]))
        ORDER BY pay.created_at DESC`,
-      [federationIds],
+      [federationIds, categories],
     );
 
     return reply.status(200).send(result.rows.map(mapPaymentRow));
@@ -85,6 +90,7 @@ export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
     await assertApplicationRecordAccess(account, {
       federationId: row.access_federation_id as string | null,
       personId: row.person_id as string | null,
+      category: row.access_category as string | null,
     });
 
     const applicationResult = await pool.query(
@@ -123,7 +129,9 @@ export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
     assertUuid(applicationId);
 
     const applicationResult = await pool.query(
-      `SELECT a.id, a.status, a.amount_kopecks, a.person_id, a.federation_id AS access_federation_id, ip.name AS product_name, p.email AS person_email
+      `SELECT a.id, a.status, a.amount_kopecks, a.person_id, a.federation_id AS access_federation_id,
+              ip.id AS product_id, ip.name AS product_name, ip.category AS access_category,
+              p.email AS person_email
        FROM applications a
        JOIN insurance_products ip ON ip.id = a.product_id
        JOIN persons p ON p.id = a.person_id
@@ -138,6 +146,7 @@ export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
     await assertApplicationRecordAccess(account, {
       federationId: application.access_federation_id as string | null,
       personId: application.person_id as string | null,
+      category: application.access_category as string | null,
     });
 
     if (application.status === 'paid' || application.status === 'policy_issued') {
@@ -155,6 +164,14 @@ export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
     const idempotenceKey = crypto.randomUUID();
     const description = `OLNOO Insurance — ${application.product_name as string}`;
 
+    // Which shop/secret to charge is decided entirely server-side from the application's
+    // own product/federation/category — the client has no say in payment routing.
+    const credentials = await resolvePaymentCredentials({
+      productId: application.product_id as string,
+      federationId: application.access_federation_id as string | null,
+      category: application.access_category as string,
+    });
+
     const yookassaPayment = await createYookassaPayment({
       amountKopecks,
       returnUrl,
@@ -162,15 +179,16 @@ export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
       idempotenceKey,
       customerEmail: personEmail,
       metadata: { application_id: applicationId },
+      credentials,
     });
 
     const status = mapYookassaStatus(yookassaPayment.status);
 
     const insertResult = await pool.query(
-      `INSERT INTO payments (application_id, provider, provider_payment_id, amount_kopecks, currency, status)
-       VALUES ($1, 'yookassa', $2, $3, 'RUB', $4)
+      `INSERT INTO payments (application_id, provider, provider_payment_id, amount_kopecks, currency, status, payment_account_id)
+       VALUES ($1, 'yookassa', $2, $3, 'RUB', $4, $5)
        RETURNING id`,
-      [applicationId, yookassaPayment.id, amountKopecks, status],
+      [applicationId, yookassaPayment.id, amountKopecks, status, credentials.paymentAccountId],
     );
 
     return reply.status(200).send({
@@ -188,9 +206,12 @@ export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
 
     const result = await pool.query(
       `SELECT pay.id, pay.application_id, pay.provider, pay.provider_payment_id, pay.status, pay.paid_at,
-              a.person_id, a.federation_id AS access_federation_id, a.status AS application_status
+              pay.payment_account_id,
+              a.person_id, a.federation_id AS access_federation_id, a.status AS application_status,
+              ip.category AS access_category
        FROM payments pay
        JOIN applications a ON a.id = pay.application_id
+       JOIN insurance_products ip ON ip.id = a.product_id
        WHERE pay.id = $1`,
       [request.params.id],
     );
@@ -202,13 +223,18 @@ export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
     await assertApplicationRecordAccess(account, {
       federationId: row.access_federation_id as string | null,
       personId: row.person_id as string | null,
+      category: row.access_category as string | null,
     });
 
     if (row.provider !== 'yookassa') {
       throw new BadRequestError('unsupported_provider');
     }
 
-    const yookassaPayment = await getYookassaPayment(row.provider_payment_id as string);
+    // Re-resolve the *same* credentials this payment was created under, not a fresh
+    // routing lookup — routing rules may have changed since, but this payment still
+    // lives under whichever shop originally created it.
+    const credentials = await getCredentialsForPaymentAccount(row.payment_account_id as string | null);
+    const yookassaPayment = await getYookassaPayment(row.provider_payment_id as string, credentials);
     const status = mapYookassaStatus(yookassaPayment.status);
 
     let paidAt = row.paid_at as string | null;

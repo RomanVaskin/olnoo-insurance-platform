@@ -17,9 +17,14 @@ export interface YookassaPayment {
   confirmation?: { type: string; confirmation_url?: string };
 }
 
-function authHeader(): string {
-  const shopId = process.env.YOOKASSA_SHOP_ID;
-  const secretKey = process.env.YOOKASSA_SECRET_KEY;
+export type YookassaCredentials = { shopId: string; secretKey: string };
+
+/** Falls back to the env-based shop when no explicit credentials are passed — every
+ * existing caller (settings.ts) keeps working unchanged; payments.ts now passes the
+ * credentials resolved by payment_routing instead. */
+function authHeader(credentials?: YookassaCredentials): string {
+  const shopId = credentials?.shopId ?? process.env.YOOKASSA_SHOP_ID;
+  const secretKey = credentials?.secretKey ?? process.env.YOOKASSA_SECRET_KEY;
   if (!shopId || !secretKey) {
     throw new YookassaError('yookassa_not_configured');
   }
@@ -51,6 +56,7 @@ export async function createYookassaPayment(params: {
   idempotenceKey: string;
   customerEmail: string;
   metadata?: Record<string, string>;
+  credentials?: YookassaCredentials;
 }): Promise<YookassaPayment> {
   const value = (params.amountKopecks / 100).toFixed(2);
 
@@ -75,7 +81,7 @@ export async function createYookassaPayment(params: {
     response = await fetch(`${API_BASE}/payments`, {
       method: 'POST',
       headers: {
-        Authorization: authHeader(),
+        Authorization: authHeader(params.credentials),
         'Idempotence-Key': params.idempotenceKey,
         'Content-Type': 'application/json',
       },
@@ -96,12 +102,15 @@ export async function createYookassaPayment(params: {
 }
 
 /** Fetches the current state of a YooKassa payment by its provider id. */
-export async function getYookassaPayment(providerPaymentId: string): Promise<YookassaPayment> {
+export async function getYookassaPayment(
+  providerPaymentId: string,
+  credentials?: YookassaCredentials,
+): Promise<YookassaPayment> {
   let response: Response;
   try {
     response = await fetch(`${API_BASE}/payments/${encodeURIComponent(providerPaymentId)}`, {
       method: 'GET',
-      headers: { Authorization: authHeader() },
+      headers: { Authorization: authHeader(credentials) },
     });
   } catch (error) {
     throw new YookassaError(`yookassa_unreachable: ${(error as Error).message}`);
@@ -120,12 +129,12 @@ export interface YookassaAccountInfo {
  * Calls GET /v3/me — YooKassa's read-only account-info endpoint, the standard
  * way to verify shop credentials without creating or touching any payment.
  */
-export async function getYookassaAccountInfo(): Promise<YookassaAccountInfo> {
+export async function getYookassaAccountInfo(credentials?: YookassaCredentials): Promise<YookassaAccountInfo> {
   let response: Response;
   try {
     response = await fetch(`${API_BASE}/me`, {
       method: 'GET',
-      headers: { Authorization: authHeader() },
+      headers: { Authorization: authHeader(credentials) },
     });
   } catch (error) {
     throw new YookassaError(`yookassa_unreachable: ${(error as Error).message}`);

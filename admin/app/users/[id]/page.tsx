@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { UserStatusBadge } from '@/components/users/user-status-badge'
 import { UserFormDialog } from '@/components/users/user-form-dialog'
 import { ResetPasswordDialog } from '@/components/users/reset-password-dialog'
+import { InsuranceAccessCard } from '@/components/users/insurance-access-card'
 import { StatePanel } from '@/components/applications/state-panel'
 import { useAccount } from '@/lib/auth-context'
 import { getRoleLabel } from '@/lib/auth'
@@ -16,7 +17,7 @@ import { formatDateTime, formatPersonName } from '@/lib/utils'
 
 type LoadState = 'loading' | 'ready' | 'forbidden' | 'not_found' | 'error'
 
-const MANAGED_ROLES = ['super_admin', 'federation_secretary', 'federation_director']
+const MANAGED_ROLES = ['super_admin', 'admin', 'federation_secretary', 'federation_director']
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -161,6 +162,8 @@ export default function Page() {
                 <Field label="ID" value={<span className="font-mono text-xs">{user.id}</span>} />
               </div>
             </Card>
+
+            {user.role === 'admin' ? <InsuranceAccessCard user={user} onSaved={() => load()} /> : null}
 
             {!managed ? (
               <p className="text-sm text-muted-foreground">

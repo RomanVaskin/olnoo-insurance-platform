@@ -4,6 +4,7 @@ import { stat } from 'node:fs/promises';
 import type { FastifyInstance } from 'fastify';
 import { pool } from '../db/pool';
 import { authenticate, getAccessibleFederationIds, isFinanceAllowed } from '../modules/auth/guards';
+import { getAccessibleCategories, requireCategoryManage } from '../modules/auth/insurance-access';
 import type { SessionAccount } from '../modules/auth/session';
 import { assertUuid, NotFoundError, HttpError, BadRequestError, toNumber } from '../lib/api-helpers';
 import { federationSummary, personSummary, productSummary } from '../lib/mappers';
@@ -17,7 +18,7 @@ const LIST_SELECT = `
     pol.application_id, pol.federation_id AS access_federation_id,
     p.id AS person_id, p.last_name AS person_last_name, p.first_name AS person_first_name, p.patronymic AS person_patronymic,
     f.id AS federation_id, f.name AS federation_name,
-    ip.id AS product_id, ip.name AS product_name
+    ip.id AS product_id, ip.name AS product_name, ip.category AS access_category
   FROM policies pol
   JOIN persons p ON p.id = pol.person_id
   LEFT JOIN federations f ON f.id = pol.federation_id
@@ -38,9 +39,24 @@ function mapPolicyRow(row: Record<string, unknown>) {
   };
 }
 
-/** Same access rule as GET /api/policies/:id, shared with the PDF generate/download routes. */
-async function assertPolicyAccess(account: SessionAccount, accessFederationId: string | null): Promise<void> {
+/**
+ * Same access rule as GET /api/policies/:id, shared with the PDF generate/download
+ * routes. 'admin' is scoped by insurance type instead of federation — pass the
+ * policy's product category for that branch to work.
+ */
+async function assertPolicyAccess(
+  account: SessionAccount,
+  accessFederationId: string | null,
+  category?: string | null,
+): Promise<void> {
   if (account.role === 'super_admin') {
+    return;
+  }
+  if (account.role === 'admin') {
+    const categories = await getAccessibleCategories(account);
+    if (categories !== null && (!category || !categories.includes(category))) {
+      throw new HttpError(403, 'forbidden');
+    }
     return;
   }
   const federationIds = await getAccessibleFederationIds(account);
@@ -53,12 +69,14 @@ export async function policiesRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/policies', async (request, reply) => {
     const account = await authenticate(request);
     const federationIds = await getAccessibleFederationIds(account);
+    const categories = await getAccessibleCategories(account);
 
     const result = await pool.query(
       `${LIST_SELECT}
        WHERE ($1::uuid[] IS NULL OR pol.federation_id = ANY($1::uuid[]))
+         AND ($2::text[] IS NULL OR ip.category = ANY($2::text[]))
        ORDER BY pol.valid_from DESC`,
-      [federationIds],
+      [federationIds, categories],
     );
 
     return reply.status(200).send(result.rows.map(mapPolicyRow));
@@ -74,7 +92,7 @@ export async function policiesRoutes(app: FastifyInstance): Promise<void> {
       throw new NotFoundError('policy_not_found');
     }
 
-    await assertPolicyAccess(account, row.access_federation_id as string | null);
+    await assertPolicyAccess(account, row.access_federation_id as string | null, row.access_category as string | null);
 
     const applicationResult = await pool.query(
       `SELECT id, status, amount_kopecks, created_at FROM applications WHERE id = $1`,
@@ -113,14 +131,20 @@ export async function policiesRoutes(app: FastifyInstance): Promise<void> {
     assertUuid(request.params.id);
 
     const accessResult = await pool.query(
-      `SELECT federation_id AS access_federation_id FROM policies WHERE id = $1`,
+      `SELECT pol.federation_id AS access_federation_id, ip.category AS access_category
+       FROM policies pol JOIN insurance_products ip ON ip.id = pol.product_id
+       WHERE pol.id = $1`,
       [request.params.id],
     );
     const accessRow = accessResult.rows[0];
     if (!accessRow) {
       throw new NotFoundError('policy_not_found');
     }
-    await assertPolicyAccess(account, accessRow.access_federation_id as string | null);
+    await assertPolicyAccess(account, accessRow.access_federation_id as string | null, accessRow.access_category as string | null);
+    // Generating a PDF is a write action: 'admin' needs 'manage' here, not just 'read'.
+    if (account.role === 'admin') {
+      await requireCategoryManage(account, accessRow.access_category as string);
+    }
 
     try {
       const result = await generatePolicyPdf(request.params.id);
@@ -144,14 +168,16 @@ export async function policiesRoutes(app: FastifyInstance): Promise<void> {
     assertUuid(request.params.id);
 
     const result = await pool.query(
-      `SELECT policy_number, policy_url, federation_id AS access_federation_id FROM policies WHERE id = $1`,
+      `SELECT pol.policy_number, pol.policy_url, pol.federation_id AS access_federation_id, ip.category AS access_category
+       FROM policies pol JOIN insurance_products ip ON ip.id = pol.product_id
+       WHERE pol.id = $1`,
       [request.params.id],
     );
     const row = result.rows[0];
     if (!row) {
       throw new NotFoundError('policy_not_found');
     }
-    await assertPolicyAccess(account, row.access_federation_id as string | null);
+    await assertPolicyAccess(account, row.access_federation_id as string | null, row.access_category as string | null);
 
     const storedFilename = row.policy_url as string | null;
     if (!storedFilename) {
