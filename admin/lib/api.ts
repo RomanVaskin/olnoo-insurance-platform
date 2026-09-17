@@ -115,6 +115,50 @@ export async function fetchApplication(id: string): Promise<ApplicationDetail> {
   return res.json()
 }
 
+// Applications management — product change is the only directly-editable field
+// (person/federation/amount are always server-derived); status changes go through
+// the explicit cancel/reopen actions instead of arbitrary status editing.
+export async function updateApplicationProduct(id: string, productId: string): Promise<ApplicationDetail> {
+  const res = await fetch(`/api/applications/${id}`, {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ product_id: productId }),
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
+export async function cancelApplication(id: string): Promise<ApplicationDetail> {
+  const res = await fetch(`/api/applications/${id}/cancel`, {
+    method: 'POST',
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
+export async function reopenApplication(id: string): Promise<ApplicationDetail> {
+  const res = await fetch(`/api/applications/${id}/reopen`, {
+    method: 'POST',
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
 export type PolicyStatus = 'active' | 'cancelled' | 'expired'
 
 export type Policy = {

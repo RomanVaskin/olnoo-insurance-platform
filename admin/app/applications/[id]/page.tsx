@@ -1,16 +1,40 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, FileQuestion, Inbox, ShieldX } from 'lucide-react'
+import { ArrowLeft, FileQuestion, Inbox, Pencil, RotateCcw, ShieldX, XCircle } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
 import { ApplicationStatusBadge } from '@/components/applications/application-status-badge'
+import { ChangeProductDialog } from '@/components/applications/change-product-dialog'
 import { StatePanel } from '@/components/applications/state-panel'
-import { ApiError, fetchApplication, type ApplicationDetail } from '@/lib/api'
+import { useAccount } from '@/lib/auth-context'
+import { ApiError, cancelApplication, fetchApplication, reopenApplication, type ApplicationDetail } from '@/lib/api'
 import { formatDateTime, formatKopecks, formatPersonName } from '@/lib/utils'
 
 type LoadState = 'loading' | 'ready' | 'forbidden' | 'not_found' | 'error'
+
+// Mirrors src/routes/applications.ts's EDITABLE_STATUSES — product change/cancel are only
+// offered while the application is still before payment.
+const EDITABLE_STATUSES = ['draft', 'pending_payment']
+
+// The backend enforces the real rule per role (admin needs 'manage' on the category,
+// federation staff must own the application's federation); this only decides whether to
+// show the buttons at all — athletes never get a management UI here.
+const MANAGEMENT_ROLES = ['super_admin', 'admin', 'federation_secretary', 'federation_director']
+
+// Mirrors the error codes POST /api/applications/:id/{cancel,reopen} can return.
+const ACTION_ERROR_MESSAGES: Record<string, string> = {
+  invalid_transition: 'Это действие недоступно для текущего статуса заявки.',
+  forbidden: 'Недостаточно прав для этого действия.',
+}
+
+function actionErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.message && ACTION_ERROR_MESSAGES[err.message]) {
+    return ACTION_ERROR_MESSAGES[err.message]
+  }
+  return 'Не удалось выполнить действие. Попробуйте ещё раз.'
+}
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -23,10 +47,21 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
+function Card({
+  title,
+  action,
+  children,
+}: {
+  title: string
+  action?: React.ReactNode
+  children: React.ReactNode
+}) {
   return (
     <div className="rounded-xl border border-border bg-card px-5 py-5">
-      <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
+        {action}
+      </div>
       <div className="mt-4 space-y-4">{children}</div>
     </div>
   )
@@ -35,10 +70,14 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
 export default function Page() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
+  const account = useAccount()
   const [application, setApplication] = useState<ApplicationDetail | null>(null)
   const [state, setState] = useState<LoadState>('loading')
+  const [editOpen, setEditOpen] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [actionBusy, setActionBusy] = useState<'cancel' | 'reopen' | null>(null)
 
-  useEffect(() => {
+  const load = useCallback(() => {
     let cancelled = false
 
     setState('loading')
@@ -71,19 +110,83 @@ export default function Page() {
     }
   }, [params.id, router])
 
+  useEffect(() => {
+    return load()
+  }, [load])
+
+  const canManage = Boolean(account && MANAGEMENT_ROLES.includes(account.role))
+  const isEditable = application ? EDITABLE_STATUSES.includes(application.status) : false
+
+  async function handleCancel() {
+    if (!application) return
+    setActionBusy('cancel')
+    setActionError(null)
+    try {
+      const updated = await cancelApplication(application.id)
+      setApplication(updated)
+    } catch (err) {
+      setActionError(actionErrorMessage(err))
+    } finally {
+      setActionBusy(null)
+    }
+  }
+
+  async function handleReopen() {
+    if (!application) return
+    setActionBusy('reopen')
+    setActionError(null)
+    try {
+      const updated = await reopenApplication(application.id)
+      setApplication(updated)
+    } catch (err) {
+      setActionError(actionErrorMessage(err))
+    } finally {
+      setActionBusy(null)
+    }
+  }
+
   return (
     <>
       <PageHeader
         title="Заявка"
         description={application ? formatPersonName(application.person) : undefined}
         action={
-          <Button variant="outline" size="lg" onClick={() => router.push('/applications')}>
-            <ArrowLeft className="size-4" />
-            К списку
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {canManage && application && isEditable ? (
+              <>
+                <Button variant="outline" size="lg" onClick={() => setEditOpen(true)}>
+                  <Pencil className="size-4" />
+                  Редактировать
+                </Button>
+                <Button variant="outline" size="lg" disabled={actionBusy !== null} onClick={handleCancel}>
+                  <XCircle className="size-4" />
+                  Отменить
+                </Button>
+              </>
+            ) : null}
+            {canManage && application && application.status === 'cancelled' ? (
+              <Button variant="outline" size="lg" disabled={actionBusy !== null} onClick={handleReopen}>
+                <RotateCcw className="size-4" />
+                Возобновить
+              </Button>
+            ) : null}
+            <Button variant="outline" size="lg" onClick={() => router.push('/applications')}>
+              <ArrowLeft className="size-4" />
+              К списку
+            </Button>
+          </div>
         }
       />
+      {application ? (
+        <ChangeProductDialog
+          open={editOpen}
+          onOpenChange={setEditOpen}
+          application={application}
+          onSaved={(updated) => setApplication(updated)}
+        />
+      ) : null}
       <div className="px-6 py-8 lg:px-10">
+        {actionError ? <p className="mb-4 text-sm text-destructive">{actionError}</p> : null}
         {state === 'loading' ? (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {Array.from({ length: 4 }).map((_, i) => (
@@ -114,7 +217,14 @@ export default function Page() {
             </Card>
 
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <Card title="Заявитель">
+              <Card
+                title="Заявитель"
+                action={
+                  <Button variant="ghost" size="sm" onClick={() => router.push(`/athletes/${application.person.id}`)}>
+                    Открыть спортсмена
+                  </Button>
+                }
+              >
                 <Field label="ФИО" value={formatPersonName(application.person)} />
                 <Field label="ID" value={<span className="font-mono text-xs">{application.person.id}</span>} />
               </Card>
@@ -138,7 +248,16 @@ export default function Page() {
                 <Field label="ID" value={<span className="font-mono text-xs">{application.product.id}</span>} />
               </Card>
 
-              <Card title="Оплата">
+              <Card
+                title="Оплата"
+                action={
+                  application.payment ? (
+                    <Button variant="ghost" size="sm" onClick={() => router.push(`/payments/${application.payment!.id}`)}>
+                      Открыть платёж
+                    </Button>
+                  ) : undefined
+                }
+              >
                 {application.payment ? (
                   <>
                     <Field label="Статус" value={application.payment.status} />
@@ -154,7 +273,16 @@ export default function Page() {
                 )}
               </Card>
 
-              <Card title="Полис">
+              <Card
+                title="Полис"
+                action={
+                  application.policy ? (
+                    <Button variant="ghost" size="sm" onClick={() => router.push(`/policies/${application.policy!.id}`)}>
+                      Открыть полис
+                    </Button>
+                  ) : undefined
+                }
+              >
                 {application.policy ? (
                   <>
                     <Field label="Номер" value={application.policy.policy_number} />
@@ -165,21 +293,6 @@ export default function Page() {
                         application.policy.valid_to,
                       )}`}
                     />
-                    {application.policy.policy_url ? (
-                      <Field
-                        label="Документ"
-                        value={
-                          <a
-                            href={application.policy.policy_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-sm underline underline-offset-4"
-                          >
-                            Открыть PDF
-                          </a>
-                        }
-                      />
-                    ) : null}
                   </>
                 ) : (
                   <p className="text-sm text-muted-foreground">Полис ещё не выпущен</p>
