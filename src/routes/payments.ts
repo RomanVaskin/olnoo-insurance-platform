@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { pool } from '../db/pool';
-import { authenticate, getAccessibleFederationIds, assertApplicationRecordAccess } from '../modules/auth/guards';
+import { authenticate, getAccessibleFederationIds, assertApplicationRecordAccess, isFinanceAllowed, AuthError } from '../modules/auth/guards';
 import { assertUuid, NotFoundError, BadRequestError, toNumber } from '../lib/api-helpers';
 import { federationSummary, personSummary, productSummary } from '../lib/mappers';
 import { getPolicyForApplication } from '../lib/related-queries';
@@ -45,6 +45,14 @@ function mapPaymentRow(row: Record<string, unknown>) {
 export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/payments', async (request, reply) => {
     const account = await authenticate(request);
+
+    // Payment records are financial data: only super_admin and federation_director
+    // (never federation_secretary) may list them. Athletes are denied below by
+    // getAccessibleFederationIds regardless (unchanged).
+    if (!isFinanceAllowed(account.role)) {
+      throw new AuthError(403, 'forbidden');
+    }
+
     const federationIds = await getAccessibleFederationIds(account);
 
     const result = await pool.query(
@@ -59,6 +67,13 @@ export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
 
   app.get<{ Params: { id: string } }>('/api/payments/:id', async (request, reply) => {
     const account = await authenticate(request);
+
+    // Same finance-only rule as the list route, but athletes keep their existing
+    // access to their own payment record (handled below by assertApplicationRecordAccess).
+    if (account.role !== 'athlete' && !isFinanceAllowed(account.role)) {
+      throw new AuthError(403, 'forbidden');
+    }
+
     assertUuid(request.params.id);
 
     const result = await pool.query(`${LIST_SELECT} WHERE pay.id = $1`, [request.params.id]);

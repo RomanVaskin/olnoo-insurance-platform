@@ -5,6 +5,16 @@ export type Account = {
   role: string
 }
 
+export const ROLE_LABELS: Record<string, string> = {
+  federation_secretary: 'Секретарь федерации',
+  federation_director: 'Руководитель федерации',
+  super_admin: 'Администратор',
+}
+
+export function getRoleLabel(role: string): string {
+  return ROLE_LABELS[role] ?? role
+}
+
 export type LoginResult = { ok: true; account: Account } | { ok: false; status: number }
 
 export async function login(email: string, password: string): Promise<LoginResult> {

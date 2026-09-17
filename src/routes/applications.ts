@@ -1,6 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { pool } from '../db/pool';
-import { authenticate, getAccessibleFederationIds, assertApplicationRecordAccess, AuthError } from '../modules/auth/guards';
+import {
+  authenticate,
+  getAccessibleFederationIds,
+  assertApplicationRecordAccess,
+  isFinanceAllowed,
+  AuthError,
+} from '../modules/auth/guards';
 import { assertUuid, NotFoundError, BadRequestError, toNumber } from '../lib/api-helpers';
 import { federationSummary, personSummary, productSummary } from '../lib/mappers';
 import { getLatestPaymentForApplication, getPolicyForApplication } from '../lib/related-queries';
@@ -17,11 +23,11 @@ const LIST_SELECT = `
   JOIN insurance_products ip ON ip.id = a.product_id
 `;
 
-function mapApplicationRow(row: Record<string, unknown>) {
+function mapApplicationRow(row: Record<string, unknown>, showAmount: boolean) {
   return {
     id: row.id,
     status: row.status,
-    amount_kopecks: toNumber(row.amount_kopecks),
+    amount_kopecks: showAmount ? toNumber(row.amount_kopecks) : null,
     created_at: row.created_at,
     person: personSummary(row),
     federation: federationSummary(row),
@@ -43,10 +49,11 @@ export async function applicationsRoutes(app: FastifyInstance): Promise<void> {
         `${LIST_SELECT} WHERE a.person_id = $1 ORDER BY a.created_at DESC`,
         [account.person_id],
       );
-      return reply.status(200).send(result.rows.map(mapApplicationRow));
+      return reply.status(200).send(result.rows.map((row) => mapApplicationRow(row, true)));
     }
 
     const federationIds = await getAccessibleFederationIds(account);
+    const showAmount = isFinanceAllowed(account.role);
 
     const result = await pool.query(
       `${LIST_SELECT}
@@ -55,7 +62,7 @@ export async function applicationsRoutes(app: FastifyInstance): Promise<void> {
       [federationIds],
     );
 
-    return reply.status(200).send(result.rows.map(mapApplicationRow));
+    return reply.status(200).send(result.rows.map((row) => mapApplicationRow(row, showAmount)));
   });
 
   app.get<{ Params: { id: string } }>('/api/applications/:id', async (request, reply) => {
@@ -78,9 +85,14 @@ export async function applicationsRoutes(app: FastifyInstance): Promise<void> {
       getPolicyForApplication(row.id as string),
     ]);
 
+    // Finance-only data (the payment sub-object and the application's own
+    // amount_kopecks): federation_secretary must never see it. Athletes need
+    // it for their own checkout status/price.
+    const showFinance = isFinanceAllowed(account.role) || account.role === 'athlete';
+
     return reply.status(200).send({
-      ...mapApplicationRow(row),
-      payment,
+      ...mapApplicationRow(row, showFinance),
+      payment: showFinance ? payment : null,
       policy,
     });
   });

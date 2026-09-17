@@ -103,7 +103,7 @@ export default function Page() {
                         <ApplicationStatusBadge status={a.status} />
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap tabular-nums">
-                        {formatKopecks(a.amount_kopecks)}
+                        {a.amount_kopecks !== null ? formatKopecks(a.amount_kopecks) : '—'}
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap tabular-nums text-muted-foreground">
                         {formatDateTime(a.created_at)}

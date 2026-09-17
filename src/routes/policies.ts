@@ -3,7 +3,7 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import type { FastifyInstance } from 'fastify';
 import { pool } from '../db/pool';
-import { authenticate, getAccessibleFederationIds } from '../modules/auth/guards';
+import { authenticate, getAccessibleFederationIds, isFinanceAllowed } from '../modules/auth/guards';
 import type { SessionAccount } from '../modules/auth/session';
 import { assertUuid, NotFoundError, HttpError, BadRequestError, toNumber } from '../lib/api-helpers';
 import { federationSummary, personSummary, productSummary } from '../lib/mappers';
@@ -92,10 +92,15 @@ export async function policiesRoutes(app: FastifyInstance): Promise<void> {
 
     const payment = await getLatestPaymentForApplication(row.application_id as string);
 
+    // The payment sub-object is finance-only data (amount, provider_payment_id,
+    // paid_at): federation_secretary must never see it. assertPolicyAccess above
+    // already excludes athletes from this route, so only staff roles reach here.
+    const showPayment = isFinanceAllowed(account.role);
+
     return reply.status(200).send({
       ...mapPolicyRow(row),
       application,
-      payment,
+      payment: showPayment ? payment : null,
     });
   });
 

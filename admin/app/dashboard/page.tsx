@@ -1,9 +1,14 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { LayoutDashboard } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Inbox, ShieldX } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
-import { fetchDashboard, type DashboardData } from '@/lib/api'
+import { StatePanel } from '@/components/applications/state-panel'
+import { ApiError, fetchDashboard, type DashboardData } from '@/lib/api'
+import { useAccount } from '@/lib/auth-context'
+
+type LoadState = 'loading' | 'ready' | 'forbidden' | 'error'
 
 const rubFormatter = new Intl.NumberFormat('ru-RU', {
   style: 'currency',
@@ -15,7 +20,22 @@ function formatKopecks(kopecks: number) {
   return rubFormatter.format(kopecks / 100)
 }
 
-function buildKpis(data: DashboardData) {
+function buildKpis(data: DashboardData, role: string | undefined) {
+  const isFederationStaff = role === 'federation_secretary' || role === 'federation_director'
+
+  if (isFederationStaff) {
+    const kpis = [
+      { label: 'Спортсмены', value: String(data.total_athletes) },
+      { label: 'Заявки', value: String(data.total_applications) },
+      { label: 'Полисы всего', value: String(data.total_policies) },
+      { label: 'Активные полисы', value: String(data.active_policies) },
+    ]
+    if (typeof data.paid_amount_kopecks === 'number') {
+      kpis.push({ label: 'Оплачено', value: formatKopecks(data.paid_amount_kopecks) })
+    }
+    return kpis
+  }
+
   return [
     { label: 'Федерации', value: String(data.total_federations) },
     { label: 'Спортсмены', value: String(data.total_athletes) },
@@ -33,40 +53,48 @@ function buildKpis(data: DashboardData) {
 }
 
 export default function Page() {
+  const router = useRouter()
+  const account = useAccount()
   const [data, setData] = useState<DashboardData | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(false)
+  const [state, setState] = useState<LoadState>('loading')
 
   useEffect(() => {
     let cancelled = false
 
-    setLoading(true)
-    setError(false)
+    setState('loading')
 
     fetchDashboard()
       .then((result) => {
-        if (!cancelled) setData(result)
+        if (cancelled) return
+        setData(result)
+        setState('ready')
       })
-      .catch(() => {
-        if (!cancelled) setError(true)
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
+      .catch((err) => {
+        if (cancelled) return
+        if (err instanceof ApiError && err.status === 401) {
+          router.replace('/login')
+          return
+        }
+        if (err instanceof ApiError && err.status === 403) {
+          setState('forbidden')
+          return
+        }
+        setState('error')
       })
 
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [router])
 
   return (
     <>
       <PageHeader
-        title="Dashboard"
+        title="Обзор"
         description="Сводная аналитика по полисам, пулам номеров и операционной активности"
       />
       <div className="px-6 py-8 lg:px-10">
-        {loading ? (
+        {state === 'loading' ? (
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 lg:gap-4">
             {Array.from({ length: 6 }).map((_, i) => (
               <div
@@ -75,18 +103,16 @@ export default function Page() {
               />
             ))}
           </div>
-        ) : error ? (
-          <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/30 px-6 py-24 text-center">
-            <div className="flex size-11 items-center justify-center rounded-full border border-border bg-background text-muted-foreground">
-              <LayoutDashboard className="size-5" />
-            </div>
-            <p className="mt-4 max-w-sm text-sm text-muted-foreground text-pretty">
-              Не удалось загрузить данные дашборда. Попробуйте обновить страницу.
-            </p>
-          </div>
+        ) : state === 'forbidden' ? (
+          <StatePanel icon={ShieldX} message="Доступ к сводке ограничен для вашей роли." />
+        ) : state === 'error' ? (
+          <StatePanel
+            icon={Inbox}
+            message="Не удалось загрузить данные дашборда. Попробуйте обновить страницу."
+          />
         ) : data ? (
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 lg:gap-4">
-            {buildKpis(data).map((kpi) => (
+            {buildKpis(data, account?.role).map((kpi) => (
               <div
                 key={kpi.label}
                 className="rounded-xl border border-border bg-card px-5 py-5 transition-colors hover:border-foreground/20"

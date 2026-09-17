@@ -13,7 +13,7 @@ export async function fetchDashboard(): Promise<DashboardData> {
   })
 
   if (!res.ok) {
-    throw new Error(`Dashboard request failed with status ${res.status}`)
+    throw new ApiError(res.status)
   }
 
   return res.json()
@@ -79,7 +79,7 @@ export type PolicySummary = {
 export type Application = {
   id: string
   status: ApplicationStatus
-  amount_kopecks: number
+  amount_kopecks: number | null
   created_at: string
   person: PersonSummary
   federation: FederationSummary

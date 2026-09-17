@@ -104,7 +104,10 @@ export default function Page() {
             <Card title="Заявка">
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
                 <Field label="Статус" value={<ApplicationStatusBadge status={application.status} />} />
-                <Field label="Сумма" value={formatKopecks(application.amount_kopecks)} />
+                <Field
+                  label="Сумма"
+                  value={application.amount_kopecks !== null ? formatKopecks(application.amount_kopecks) : '—'}
+                />
                 <Field label="Создана" value={formatDateTime(application.created_at)} />
                 <Field label="ID" value={<span className="font-mono text-xs">{application.id}</span>} />
               </div>
