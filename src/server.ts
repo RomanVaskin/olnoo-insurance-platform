@@ -15,6 +15,7 @@ import { productsRoutes } from './routes/products';
 import { documentsRoutes } from './routes/documents';
 import { settingsRoutes } from './routes/settings';
 import { usersRoutes } from './routes/users';
+import { importsRoutes } from './routes/imports';
 
 const app = Fastify();
 
@@ -33,6 +34,7 @@ app.register(productsRoutes);
 app.register(documentsRoutes);
 app.register(settingsRoutes);
 app.register(usersRoutes);
+app.register(importsRoutes);
 
 // Translates AuthError (401/403) and HttpError (400/404) thrown by route handlers
 // into their intended JSON responses; anything else is an unexpected 500.

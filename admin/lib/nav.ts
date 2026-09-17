@@ -14,6 +14,7 @@ import {
   PackageSearch,
   Settings,
   UserCog,
+  Upload,
 } from 'lucide-react'
 
 export type NavItem = { label: string; href: string; icon: LucideIcon }
@@ -32,6 +33,7 @@ const superAdminNav: NavItem[] = [
   { label: 'Документы', href: '/documents', icon: FileScan },
   { label: 'Платежи', href: '/payments', icon: Wallet },
   { label: 'Пользователи', href: '/users', icon: UserCog },
+  { label: 'Импорт данных', href: '/import', icon: Upload },
   { label: 'Настройки', href: '/settings', icon: Settings },
 ]
 

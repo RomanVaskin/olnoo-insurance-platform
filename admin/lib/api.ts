@@ -848,3 +848,89 @@ export async function createDocument(params: {
 
   return res.json()
 }
+
+// Excel Import Center — mass data import for super_admin (see src/routes/imports.ts).
+export type ImportType = 'federations' | 'athletes' | 'products' | 'assignments'
+
+export type ImportRowResult = {
+  row_number: number
+  action: 'create' | 'update' | 'skip'
+  matched_id: string | null
+  data: Record<string, unknown> | null
+  /** Original raw cell values for this row — send this (not `data`) back on commit. */
+  raw: Record<string, unknown>
+  errors: string[]
+  warnings: string[]
+}
+
+export type ImportPreviewResult = {
+  import_type: ImportType
+  total_rows: number
+  valid_rows: number
+  invalid_rows: number
+  rows: ImportRowResult[]
+}
+
+export type ImportCommitResult = {
+  import_type: ImportType
+  created: number
+  updated: number
+  skipped: number
+  errors: { row_number: number; errors: string[] }[]
+}
+
+export async function downloadImportTemplate(type: ImportType): Promise<void> {
+  const res = await fetch(`/api/imports/template/${type}`, {
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw new ApiError(res.status)
+  }
+
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `${type}_template.xlsx`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
+export async function previewImport(type: ImportType, file: File): Promise<ImportPreviewResult> {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('type', type)
+
+  const res = await fetch('/api/imports/preview', {
+    method: 'POST',
+    credentials: 'include',
+    body: form,
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
+export async function commitImport(
+  type: ImportType,
+  rows: { row_number: number; raw: Record<string, unknown> }[],
+): Promise<ImportCommitResult> {
+  const res = await fetch('/api/imports/commit', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type, rows }),
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
