@@ -261,7 +261,7 @@ export async function athletesRoutes(app: FastifyInstance): Promise<void> {
       pool.query(
         `SELECT a.id, a.status, a.amount_kopecks, a.created_at,
                 f.id AS federation_id, f.name AS federation_name,
-                ip.id AS product_id, ip.name AS product_name
+                ip.id AS product_id, ip.name AS product_name, ip.category AS access_category
          FROM applications a
          LEFT JOIN federations f ON f.id = a.federation_id
          JOIN insurance_products ip ON ip.id = a.product_id
@@ -280,7 +280,7 @@ export async function athletesRoutes(app: FastifyInstance): Promise<void> {
       ),
       pool.query(
         `SELECT pol.id, pol.policy_number, pol.status, pol.valid_from, pol.valid_to, pol.policy_url,
-                ip.id AS product_id, ip.name AS product_name
+                ip.id AS product_id, ip.name AS product_name, ip.category AS access_category
          FROM policies pol
          JOIN insurance_products ip ON ip.id = pol.product_id
          WHERE pol.person_id = $1 AND ($2::uuid[] IS NULL OR pol.federation_id = ANY($2::uuid[]))

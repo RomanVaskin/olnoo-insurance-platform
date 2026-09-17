@@ -9,6 +9,7 @@ import { ProductStatusBadge } from '@/components/products/product-status-badge'
 import { ProductFormDialog } from '@/components/products/product-form-dialog'
 import { StatePanel } from '@/components/applications/state-panel'
 import { useAccount } from '@/lib/auth-context'
+import { getInsuranceTypeLabel, getManageableInsuranceTypes } from '@/lib/auth'
 import { ApiError, fetchProducts, type Product } from '@/lib/api'
 import { formatKopecks } from '@/lib/utils'
 
@@ -20,6 +21,7 @@ export default function Page() {
   const [products, setProducts] = useState<Product[]>([])
   const [state, setState] = useState<LoadState>('loading')
   const [createOpen, setCreateOpen] = useState(false)
+  const manageableCategories = getManageableInsuranceTypes(account)
 
   const load = useCallback(() => {
     setState('loading')
@@ -52,7 +54,7 @@ export default function Page() {
         title="Страховые продукты"
         description="Каталог страховых продуктов платформы"
         action={
-          account?.role === 'super_admin' || account?.role === 'admin' ? (
+          manageableCategories.length > 0 ? (
             <Button size="lg" onClick={() => setCreateOpen(true)}>
               <Plus className="size-4" />
               Создать продукт
@@ -60,8 +62,13 @@ export default function Page() {
           ) : undefined
         }
       />
-      {account?.role === 'super_admin' || account?.role === 'admin' ? (
-        <ProductFormDialog open={createOpen} onOpenChange={setCreateOpen} onSaved={() => load()} />
+      {manageableCategories.length > 0 ? (
+        <ProductFormDialog
+          open={createOpen}
+          onOpenChange={setCreateOpen}
+          allowedCategories={manageableCategories}
+          onSaved={() => load()}
+        />
       ) : null}
       <div className="px-6 py-8 lg:px-10">
         {state === 'loading' ? (
@@ -107,7 +114,7 @@ export default function Page() {
                       className="cursor-pointer border-b border-border last:border-0 transition-colors hover:bg-muted/40"
                     >
                       <td className="px-4 py-3 font-medium whitespace-nowrap">{p.name}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{p.category}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{getInsuranceTypeLabel(p.category)}</td>
                       <td className="px-4 py-3 text-muted-foreground">{p.insurer_name ?? '—'}</td>
                       <td className="px-4 py-3 whitespace-nowrap tabular-nums text-muted-foreground">
                         {p.coverage_amount_kopecks !== null ? formatKopecks(p.coverage_amount_kopecks) : '—'}

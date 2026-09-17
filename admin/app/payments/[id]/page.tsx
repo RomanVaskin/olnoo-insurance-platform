@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { ApplicationStatusBadge } from '@/components/applications/application-status-badge'
 import { StatePanel } from '@/components/applications/state-panel'
 import { ApiError, fetchPayment, type PaymentDetail } from '@/lib/api'
-import { formatDateTime, formatKopecks, formatPersonName } from '@/lib/utils'
+import { formatDateTime, formatKopecks, formatPaymentStatus, formatPersonName } from '@/lib/utils'
 
 type LoadState = 'loading' | 'ready' | 'forbidden' | 'not_found' | 'error'
 
@@ -100,7 +100,7 @@ export default function Page() {
           <div className="space-y-4">
             <Card title="Платёж">
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                <Field label="Статус" value={payment.status} />
+                <Field label="Статус" value={formatPaymentStatus(payment.status)} />
                 <Field label="Сумма" value={formatKopecks(payment.amount_kopecks)} />
                 <Field label="Провайдер" value={payment.provider} />
                 <Field
@@ -170,7 +170,7 @@ export default function Page() {
                         label="Документ"
                         value={
                           <a
-                            href={payment.policy.policy_url}
+                            href={`/api/policies/${payment.policy.id}/pdf`}
                             target="_blank"
                             rel="noreferrer"
                             className="text-sm underline underline-offset-4"

@@ -6,7 +6,7 @@ import { Inbox, ShieldX } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { StatePanel } from '@/components/applications/state-panel'
 import { ApiError, fetchPayments, type Payment } from '@/lib/api'
-import { formatDateTime, formatKopecks, formatPersonName } from '@/lib/utils'
+import { formatDateTime, formatKopecks, formatPaymentStatus, formatPersonName } from '@/lib/utils'
 
 type LoadState = 'loading' | 'ready' | 'forbidden' | 'error'
 
@@ -90,7 +90,7 @@ export default function Page() {
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">{pay.federation?.name ?? '—'}</td>
                       <td className="px-4 py-3 text-muted-foreground">{pay.product.name}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{pay.status}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{formatPaymentStatus(pay.status)}</td>
                       <td className="px-4 py-3 whitespace-nowrap tabular-nums">
                         {formatKopecks(pay.amount_kopecks)}
                       </td>

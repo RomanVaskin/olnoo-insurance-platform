@@ -10,6 +10,7 @@ import { FederationFormDialog } from '@/components/federations/federation-form-d
 import { InsuredStatusBadge } from '@/components/athletes/insured-status-badge'
 import { StatePanel } from '@/components/applications/state-panel'
 import { useAccount } from '@/lib/auth-context'
+import { getInsuranceTypeLabel } from '@/lib/auth'
 import { ApiError, fetchFederation, type FederationDetail } from '@/lib/api'
 import { formatKopecks, formatPersonName } from '@/lib/utils'
 
@@ -140,7 +141,7 @@ export default function Page() {
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               <Card title="Показатели">
                 <div className="grid grid-cols-2 gap-4">
-                  <Field label="Спортсменов" value={federation.athlete_count} />
+                  <Field label="Всего членов федерации" value={federation.athlete_count} />
                   {showFinance ? (
                     <>
                       <Field label="Заявок" value={federation.application_count} />
@@ -165,7 +166,11 @@ export default function Page() {
                       <div key={u.id} className="flex items-center justify-between border-t border-border pt-3 first:border-0 first:pt-0">
                         <span className="text-sm">{u.email ?? '—'}</span>
                         <span className="text-xs text-muted-foreground">
-                          {u.role === 'director' ? 'Директор' : u.role === 'secretary' ? 'Секретарь' : u.role}
+                          {u.role === 'director'
+                            ? 'Директор федерации'
+                            : u.role === 'secretary'
+                              ? 'Секретарь федерации'
+                              : u.role}
                         </span>
                       </div>
                     ))}
@@ -197,7 +202,9 @@ export default function Page() {
                         {federation.assigned_products.map((p) => (
                           <tr key={p.id} className="border-b border-border last:border-0">
                             <td className="px-4 py-3 font-medium whitespace-nowrap">{p.product.name}</td>
-                            <td className="px-4 py-3 text-muted-foreground">{p.product.category}</td>
+                            <td className="px-4 py-3 text-muted-foreground">
+                              {getInsuranceTypeLabel(p.product.category)}
+                            </td>
                             <td className="px-4 py-3 whitespace-nowrap tabular-nums text-muted-foreground">
                               {formatKopecks(p.price_kopecks)}
                             </td>

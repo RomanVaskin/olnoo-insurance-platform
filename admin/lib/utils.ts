@@ -15,6 +15,17 @@ export function formatKopecks(kopecks: number) {
   return rubFormatter.format(kopecks / 100)
 }
 
+const PAYMENT_STATUS_LABELS: Record<string, string> = {
+  pending: 'Ожидает оплаты',
+  paid: 'Оплачен',
+  cancelled: 'Отменён',
+  refunded: 'Возвращён',
+}
+
+export function formatPaymentStatus(status: string) {
+  return PAYMENT_STATUS_LABELS[status] ?? status
+}
+
 export function formatPersonName(person: { last_name: string; first_name: string; patronymic: string | null }) {
   return [person.last_name, person.first_name, person.patronymic].filter(Boolean).join(' ')
 }

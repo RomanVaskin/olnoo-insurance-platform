@@ -106,9 +106,11 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
     getCurrentAccount().then((acc) => {
       if (cancelled) return
-      if (acc) {
+      if (acc && ['super_admin', 'admin', 'federation_secretary', 'federation_director'].includes(acc.role)) {
         setAccount(acc)
         setAuthorized(true)
+      } else if (acc) {
+        void logout().finally(() => router.replace('/login'))
       } else {
         router.replace('/login')
       }

@@ -64,8 +64,9 @@ const adminNav: NavItem[] = [
 ]
 
 export function getNavForRole(role: string | null | undefined): NavItem[] {
+  if (role === 'super_admin') return superAdminNav
   if (role === 'federation_secretary') return federationSecretaryNav
   if (role === 'federation_director') return federationDirectorNav
   if (role === 'admin') return adminNav
-  return superAdminNav
+  return []
 }

@@ -9,19 +9,15 @@ import { ApplicationStatusBadge } from '@/components/applications/application-st
 import { ChangeProductDialog } from '@/components/applications/change-product-dialog'
 import { StatePanel } from '@/components/applications/state-panel'
 import { useAccount } from '@/lib/auth-context'
+import { canManageInsuranceType, getManageableInsuranceTypes } from '@/lib/auth'
 import { ApiError, cancelApplication, fetchApplication, reopenApplication, type ApplicationDetail } from '@/lib/api'
-import { formatDateTime, formatKopecks, formatPersonName } from '@/lib/utils'
+import { formatDateTime, formatKopecks, formatPaymentStatus, formatPersonName } from '@/lib/utils'
 
 type LoadState = 'loading' | 'ready' | 'forbidden' | 'not_found' | 'error'
 
 // Mirrors src/routes/applications.ts's EDITABLE_STATUSES — product change/cancel are only
 // offered while the application is still before payment.
 const EDITABLE_STATUSES = ['draft', 'pending_payment']
-
-// The backend enforces the real rule per role (admin needs 'manage' on the category,
-// federation staff must own the application's federation); this only decides whether to
-// show the buttons at all — athletes never get a management UI here.
-const MANAGEMENT_ROLES = ['super_admin', 'admin', 'federation_secretary', 'federation_director']
 
 // Mirrors the error codes POST /api/applications/:id/{cancel,reopen} can return.
 const ACTION_ERROR_MESSAGES: Record<string, string> = {
@@ -114,7 +110,12 @@ export default function Page() {
     return load()
   }, [load])
 
-  const canManage = Boolean(account && MANAGEMENT_ROLES.includes(account.role))
+  const isFederationStaff = account?.role === 'federation_secretary' || account?.role === 'federation_director'
+  const canManage = Boolean(
+    application && account && (
+      isFederationStaff || canManageInsuranceType(account, application.product.category)
+    ),
+  )
   const isEditable = application ? EDITABLE_STATUSES.includes(application.status) : false
 
   async function handleCancel() {
@@ -182,6 +183,7 @@ export default function Page() {
           open={editOpen}
           onOpenChange={setEditOpen}
           application={application}
+          allowedCategories={account?.role === 'admin' ? getManageableInsuranceTypes(account) : undefined}
           onSaved={(updated) => setApplication(updated)}
         />
       ) : null}
@@ -260,7 +262,7 @@ export default function Page() {
               >
                 {application.payment ? (
                   <>
-                    <Field label="Статус" value={application.payment.status} />
+                    <Field label="Статус" value={formatPaymentStatus(application.payment.status)} />
                     <Field label="Сумма" value={formatKopecks(application.payment.amount_kopecks)} />
                     <Field label="Провайдер" value={application.payment.provider} />
                     <Field

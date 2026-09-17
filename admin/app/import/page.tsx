@@ -15,7 +15,7 @@ export default function Page() {
       <PageHeader title="Импорт данных" description="Массовый импорт данных платформы из файлов .xlsx" />
       <div className="px-6 py-8 lg:px-10">
         {!isSuperAdmin ? (
-          <StatePanel icon={ShieldX} message="Импорт данных доступен только администратору." />
+          <StatePanel icon={ShieldX} message="Импорт данных доступен только супер-админу." />
         ) : (
           <div className="space-y-4">
             <ImportTypeCard

@@ -5,6 +5,8 @@ import { useParams, useRouter } from 'next/navigation'
 import { ArrowLeft, Download, FileQuestion, FileScan, Inbox, Loader2, ShieldX, Trash2 } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { StatePanel } from '@/components/applications/state-panel'
+import { ApplicationStatusBadge } from '@/components/applications/application-status-badge'
+import { PolicyStatusBadge } from '@/components/policies/policy-status-badge'
 import { Dialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import {
@@ -159,7 +161,7 @@ export default function DocumentDetailPage() {
               <div className="rounded-xl border border-border bg-card p-6">
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                   <Field label="Тип" value={documentTypes.find((item) => item.value === document.type)?.label ?? document.type} />
-                  <Field label="Статус" value={document.status} />
+                  <Field label="Статус" value={document.status === 'active' ? 'Активен' : document.status} />
                   <Field label="Загружен" value={formatDateTime(document.created_at)} />
                   <Field label="ID" value={<span className="font-mono text-xs">{document.id}</span>} />
                 </div>
@@ -182,7 +184,12 @@ export default function DocumentDetailPage() {
                 <div className="rounded-xl border border-border bg-card p-5">
                   <h2 className="text-sm font-semibold">Заявка</h2>
                   <div className="mt-4 space-y-3">
-                    <Field label="Статус" value={document.application?.status ?? 'Не привязан'} />
+                    <Field
+                      label="Статус"
+                      value={document.application
+                        ? <ApplicationStatusBadge status={document.application.status} />
+                        : 'Не привязан'}
+                    />
                     {document.application ? <Button variant="ghost" size="sm" onClick={() => router.push(`/applications/${document.application!.id}`)}>Открыть заявку</Button> : null}
                   </div>
                 </div>
@@ -190,6 +197,7 @@ export default function DocumentDetailPage() {
                   <h2 className="text-sm font-semibold">Полис</h2>
                   <div className="mt-4 space-y-3">
                     <Field label="Номер" value={document.policy?.policy_number ?? 'Не выпущен'} />
+                    {document.policy ? <Field label="Статус" value={<PolicyStatusBadge status={document.policy.status} />} /> : null}
                     {document.policy ? <Button variant="ghost" size="sm" onClick={() => router.push(`/policies/${document.policy!.id}`)}>Открыть полис</Button> : null}
                   </div>
                 </div>

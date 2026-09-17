@@ -3,15 +3,60 @@ export type Account = {
   person_id: string | null
   email: string | null
   role: string
+  insurance_access: InsuranceAccessGrant[]
+}
+
+export type InsurancePermission = 'read' | 'manage'
+
+export type InsuranceAccessGrant = {
+  insurance_type: string
+  permission: InsurancePermission
+}
+
+export const INSURANCE_TYPES = ['sport', 'travel', 'health', 'auto', 'property', 'business'] as const
+
+export const INSURANCE_TYPE_LABELS: Record<string, string> = {
+  sport: 'Спорт',
+  travel: 'Путешествия',
+  health: 'Здоровье',
+  auto: 'Авто',
+  property: 'Недвижимость',
+  business: 'Бизнес',
 }
 
 export const ROLE_LABELS: Record<string, string> = {
   super_admin: 'Супер-админ',
   admin: 'Админ',
-  federation_director: 'Руководитель федерации',
+  federation_director: 'Директор федерации',
   federation_secretary: 'Секретарь федерации',
   athlete: 'Пользователь',
   guardian: 'Опекун',
+}
+
+export function getInsuranceTypeLabel(type: string): string {
+  return INSURANCE_TYPE_LABELS[type] ?? type
+}
+
+export function getAccessibleInsuranceTypes(account: Account | null): string[] {
+  if (account?.role === 'super_admin') return [...INSURANCE_TYPES]
+  if (account?.role !== 'admin') return []
+  return account.insurance_access.map((grant) => grant.insurance_type)
+}
+
+export function getManageableInsuranceTypes(account: Account | null): string[] {
+  if (account?.role === 'super_admin') return [...INSURANCE_TYPES]
+  if (account?.role !== 'admin') return []
+  return account.insurance_access
+    .filter((grant) => grant.permission === 'manage')
+    .map((grant) => grant.insurance_type)
+}
+
+export function canManageInsuranceType(account: Account | null, type: string): boolean {
+  return getManageableInsuranceTypes(account).includes(type)
+}
+
+export function hasAnyInsuranceManageAccess(account: Account | null): boolean {
+  return getManageableInsuranceTypes(account).length > 0
 }
 
 export function getRoleLabel(role: string): string {

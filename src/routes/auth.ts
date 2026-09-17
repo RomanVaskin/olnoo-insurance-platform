@@ -24,12 +24,19 @@ interface AccountRow {
   status: string;
 }
 
-function toPublicAccount(account: { id: string; person_id: string | null; email: string | null; role: string }) {
+async function toPublicAccount(account: { id: string; person_id: string | null; email: string | null; role: string }) {
+  const insuranceAccess = account.role === 'admin'
+    ? (await pool.query<{ insurance_type: string; permission: 'read' | 'manage' }>(
+        `SELECT insurance_type, permission FROM admin_insurance_access WHERE account_id = $1 ORDER BY insurance_type`,
+        [account.id],
+      )).rows
+    : [];
   return {
     id: account.id,
     person_id: account.person_id,
     email: account.email,
     role: account.role,
+    insurance_access: insuranceAccess,
   };
 }
 
@@ -61,7 +68,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
     await pool.query(`UPDATE accounts SET last_login_at = now() WHERE id = $1`, [account.id]);
 
-    return reply.status(200).send({ account: toPublicAccount(account) });
+    return reply.status(200).send({ account: await toPublicAccount(account) });
   });
 
   app.post('/api/auth/logout', async (request, reply) => {
@@ -82,6 +89,6 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(401).send({ error: 'unauthorized' });
     }
 
-    return reply.status(200).send({ account: toPublicAccount(account) });
+    return reply.status(200).send({ account: await toPublicAccount(account) });
   });
 }

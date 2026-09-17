@@ -6,6 +6,7 @@ import { ArrowLeft, FileQuestion, Inbox, Pencil, ShieldX } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
 import { InsuredStatusBadge } from '@/components/athletes/insured-status-badge'
+import { PolicyStatusBadge } from '@/components/policies/policy-status-badge'
 import { AthleteFormDialog } from '@/components/athletes/athlete-form-dialog'
 import { StatePanel } from '@/components/applications/state-panel'
 import { useAccount } from '@/lib/auth-context'
@@ -200,10 +201,14 @@ export default function Page() {
                       </thead>
                       <tbody>
                         {athlete.policies.map((p) => (
-                          <tr key={p.id} className="border-b border-border last:border-0">
+                          <tr
+                            key={p.id}
+                            onClick={() => router.push(`/policies/${p.id}`)}
+                            className="cursor-pointer border-b border-border last:border-0 transition-colors hover:bg-muted/40"
+                          >
                             <td className="px-4 py-3 font-medium whitespace-nowrap">{p.policy_number}</td>
                             <td className="px-4 py-3 text-muted-foreground">{p.product.name}</td>
-                            <td className="px-4 py-3 text-muted-foreground">{p.status}</td>
+                            <td className="px-4 py-3"><PolicyStatusBadge status={p.status} /></td>
                             <td className="px-4 py-3 whitespace-nowrap tabular-nums text-muted-foreground">
                               {formatDateTime(p.valid_from)} — {formatDateTime(p.valid_to)}
                             </td>

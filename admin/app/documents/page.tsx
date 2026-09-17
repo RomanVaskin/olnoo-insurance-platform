@@ -13,6 +13,8 @@ import {
 import { PageHeader } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
 import { StatePanel } from '@/components/applications/state-panel'
+import { useAccount } from '@/lib/auth-context'
+import { hasAnyInsuranceManageAccess } from '@/lib/auth'
 import {
   ApiError,
   createDocument,
@@ -51,6 +53,17 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 type Step = 'form' | 'recognizing' | 'review' | 'saving' | 'done'
 
+function documentActionError(err: unknown, fallback: string): string {
+  if (!(err instanceof ApiError)) return fallback
+  if (err.status === 403) return 'Недостаточно прав: для действия нужен доступ на управление.'
+  if (err.message === 'person_not_found') return 'Персона не найдена.'
+  if (err.message === 'application_not_found') return 'Заявка не найдена.'
+  if (err.message === 'application_person_mismatch') return 'Заявка принадлежит другой персоне.'
+  if (err.message === 'unsupported_file_type') return 'Формат файла не поддерживается.'
+  if (err.message === 'file_too_large') return 'Файл превышает допустимый размер.'
+  return fallback
+}
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
@@ -63,6 +76,14 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 export default function DocumentsPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const account = useAccount()
+  const canUpload = Boolean(
+    account && (
+      hasAnyInsuranceManageAccess(account) ||
+      account.role === 'federation_secretary' ||
+      account.role === 'federation_director'
+    ),
+  )
 
   const [docType, setDocType] = useState<DocumentType>('passport')
   const [file, setFile] = useState<File | null>(null)
@@ -75,6 +96,7 @@ export default function DocumentsPage() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [savedDoc, setSavedDoc] = useState<DocumentRecord | null>(null)
   const [documents, setDocuments] = useState<DocumentRecord[]>([])
+  const [listLoading, setListLoading] = useState(true)
   const [listError, setListError] = useState(false)
   const [filter, setFilter] = useState<DocumentType | ''>('')
 
@@ -88,17 +110,22 @@ export default function DocumentsPage() {
 
   useEffect(() => {
     let cancelled = false
+    setListLoading(true)
     fetchDocuments(filter || undefined)
       .then((result) => {
         if (!cancelled) {
           setDocuments(result)
           setListError(false)
+          setListLoading(false)
         }
       })
       .catch((err) => {
         if (cancelled) return
         if (err instanceof ApiError && err.status === 401) router.replace('/login')
-        else setListError(true)
+        else {
+          setListError(true)
+          setListLoading(false)
+        }
       })
     return () => { cancelled = true }
   }, [filter, router, savedDoc])
@@ -123,9 +150,7 @@ export default function DocumentsPage() {
         router.replace('/login')
         return
       }
-      setRecognizeError(
-        err instanceof ApiError ? err.message : 'Не удалось распознать документ. Попробуйте ещё раз.',
-      )
+      setRecognizeError(documentActionError(err, 'Не удалось распознать документ. Попробуйте ещё раз.'))
       setStep('form')
     }
   }
@@ -155,9 +180,7 @@ export default function DocumentsPage() {
         router.replace('/login')
         return
       }
-      setSaveError(
-        err instanceof ApiError ? err.message : 'Не удалось сохранить документ. Попробуйте ещё раз.',
-      )
+      setSaveError(documentActionError(err, 'Не удалось сохранить документ. Попробуйте ещё раз.'))
       setStep('review')
     }
   }
@@ -182,7 +205,7 @@ export default function DocumentsPage() {
       />
 
       <div className="px-6 py-8 lg:px-10">
-        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
+        {canUpload ? <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
           <div className="max-w-2xl space-y-6">
             {/* Upload card */}
             <div className="rounded-xl border border-border bg-card p-6">
@@ -373,7 +396,11 @@ export default function DocumentsPage() {
               </div>
             )}
           </div>
-        </div>
+        </div> : (
+          <div className="rounded-xl border border-border bg-muted/30 p-5 text-sm text-muted-foreground">
+            Документы доступны для просмотра. Загрузка и распознавание требуют доступа на управление.
+          </div>
+        )}
 
         <div className="mt-10">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -388,7 +415,15 @@ export default function DocumentsPage() {
               {documentTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
             </select>
           </div>
-          {listError ? (
+          {listLoading ? (
+            <div className="overflow-hidden rounded-xl border border-border">
+              <div className="space-y-px bg-border">
+                {Array.from({ length: 4 }).map((_, index) => (
+                  <div key={index} className="h-12 animate-pulse bg-muted/30" />
+                ))}
+              </div>
+            </div>
+          ) : listError ? (
             <StatePanel icon={FileScan} message="Не удалось загрузить список документов." />
           ) : documents.length === 0 ? (
             <StatePanel icon={FileScan} message="Документы не найдены." />

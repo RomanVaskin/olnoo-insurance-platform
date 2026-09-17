@@ -4,18 +4,10 @@ import { useEffect, useState } from 'react'
 import { Dialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { ApiError, createProduct, updateProduct, type Product, type ProductInput } from '@/lib/api'
+import { getInsuranceTypeLabel } from '@/lib/auth'
 
 const inputClass =
   'h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none transition-colors hover:border-foreground/30 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50'
-
-const CATEGORY_LABELS: Record<string, string> = {
-  sport: 'Спорт',
-  travel: 'Путешествия',
-  health: 'Здоровье',
-  auto: 'Авто',
-  property: 'Недвижимость',
-  business: 'Бизнес',
-}
 
 // Mirrors the error codes the backend returns for POST/PATCH /api/products
 // (see src/routes/products.ts).
@@ -49,12 +41,14 @@ export function ProductFormDialog({
   open,
   onOpenChange,
   product,
+  allowedCategories,
   onSaved,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   /** Present in edit mode, pre-populates the form; absent (or null) creates a new product. */
   product?: Product | null
+  allowedCategories: string[]
   onSaved: (product: Product) => void
 }) {
   const isEdit = Boolean(product)
@@ -71,7 +65,7 @@ export function ProductFormDialog({
   useEffect(() => {
     if (open) {
       setName(product?.name ?? '')
-      setCategory(product?.category ?? 'sport')
+      setCategory(product?.category ?? allowedCategories[0] ?? '')
       setInsurerName(product?.insurer_name ?? '')
       setCoverageRubles(
         product?.coverage_amount_kopecks !== null && product?.coverage_amount_kopecks !== undefined
@@ -84,7 +78,7 @@ export function ProductFormDialog({
       setError(null)
       setSubmitting(false)
     }
-  }, [open, product])
+  }, [open, product, allowedCategories])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -137,9 +131,9 @@ export function ProductFormDialog({
         <label className="block">
           <span className="mb-2 block text-sm font-medium">Категория</span>
           <select value={category} onChange={(e) => setCategory(e.target.value)} className={inputClass}>
-            {Object.entries(CATEGORY_LABELS).map(([value, label]) => (
+            {allowedCategories.map((value) => (
               <option key={value} value={value}>
-                {label}
+                {getInsuranceTypeLabel(value)}
               </option>
             ))}
           </select>

@@ -24,5 +24,6 @@ export function productSummary(row: Record<string, unknown>, prefix = 'product_'
   return {
     id: row[`${prefix}id`] as string,
     name: row[`${prefix}name`] as string,
+    category: row.access_category as string,
   };
 }

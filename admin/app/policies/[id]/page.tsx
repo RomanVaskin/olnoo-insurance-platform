@@ -10,6 +10,7 @@ import { PolicyStatusBadge } from '@/components/policies/policy-status-badge'
 import { EditPolicyNumberDialog } from '@/components/policies/edit-policy-number-dialog'
 import { StatePanel } from '@/components/applications/state-panel'
 import { useAccount } from '@/lib/auth-context'
+import { canManageInsuranceType } from '@/lib/auth'
 import {
   ApiError,
   cancelPolicy,
@@ -19,15 +20,13 @@ import {
   reactivatePolicy,
   type PolicyDetail,
 } from '@/lib/api'
-import { formatDateTime, formatKopecks, formatPersonName } from '@/lib/utils'
+import { formatDateTime, formatKopecks, formatPaymentStatus, formatPersonName } from '@/lib/utils'
 
 type LoadState = 'loading' | 'ready' | 'forbidden' | 'not_found' | 'error'
 
 // The backend enforces the real rule per role (admin needs 'manage' on the category,
 // federation staff must own the policy's federation); this only decides whether to show
 // the buttons at all — athletes never get a management UI here.
-const MANAGEMENT_ROLES = ['super_admin', 'admin', 'federation_secretary', 'federation_director']
-
 // Mirrors the error codes POST /api/policies/:id/{cancel,reactivate,expire,generate-pdf} return.
 const ACTION_ERROR_MESSAGES: Record<string, string> = {
   invalid_transition: 'Это действие недоступно для текущего статуса или срока действия полиса.',
@@ -120,7 +119,10 @@ export default function Page() {
     return load()
   }, [load])
 
-  const canManage = state === 'ready' && Boolean(account && MANAGEMENT_ROLES.includes(account.role))
+  const isFederationStaff = account?.role === 'federation_secretary' || account?.role === 'federation_director'
+  const canManage = state === 'ready' && Boolean(
+    policy && account && (isFederationStaff || canManageInsuranceType(account, policy.product.category)),
+  )
 
   async function runAction(kind: 'cancel' | 'reactivate' | 'expire' | 'pdf', fn: () => Promise<PolicyDetail | { policy_url: string }>) {
     if (!policy || actionBusy) return
@@ -197,7 +199,7 @@ export default function Page() {
                 Восстановить
               </Button>
             ) : null}
-            <Button variant="outline" size="lg" onClick={() => router.push('/')}>
+            <Button variant="outline" size="lg" onClick={() => router.push('/policies')}>
               <ArrowLeft className="size-4" />
               К списку
             </Button>
@@ -313,7 +315,7 @@ export default function Page() {
               >
                 {policy.payment ? (
                   <>
-                    <Field label="Статус" value={policy.payment.status} />
+                    <Field label="Статус" value={formatPaymentStatus(policy.payment.status)} />
                     <Field label="Сумма" value={formatKopecks(policy.payment.amount_kopecks)} />
                     <Field label="Провайдер" value={policy.payment.provider} />
                     <Field

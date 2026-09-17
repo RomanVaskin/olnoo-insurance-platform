@@ -10,6 +10,7 @@ import { ProductFormDialog } from '@/components/products/product-form-dialog'
 import { FederationAssignmentDialog } from '@/components/products/federation-assignment-dialog'
 import { StatePanel } from '@/components/applications/state-panel'
 import { useAccount } from '@/lib/auth-context'
+import { canManageInsuranceType, getInsuranceTypeLabel, getManageableInsuranceTypes } from '@/lib/auth'
 import {
   ApiError,
   fetchFederations,
@@ -58,10 +59,6 @@ export default function Page() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
   const account = useAccount()
-  // Kept as `isSuperAdmin` (not renamed) to minimize the diff — 'admin' is also allowed
-  // to write here; the backend enforces per-category 'manage' permission regardless of
-  // what this flag shows client-side.
-  const isSuperAdmin = account?.role === 'super_admin' || account?.role === 'admin'
   const [product, setProduct] = useState<ProductDetail | null>(null)
   const [federations, setFederations] = useState<Federation[]>([])
   const [state, setState] = useState<LoadState>('loading')
@@ -69,6 +66,8 @@ export default function Page() {
   const [assignOpen, setAssignOpen] = useState(false)
   const [editingAssignment, setEditingAssignment] = useState<ProductFederationAssignment | null>(null)
   const [removingId, setRemovingId] = useState<string | null>(null)
+  const canManage = Boolean(product && canManageInsuranceType(account, product.category))
+  const manageableCategories = getManageableInsuranceTypes(account)
 
   const load = useCallback(() => {
     let cancelled = false
@@ -108,12 +107,12 @@ export default function Page() {
   }, [load])
 
   useEffect(() => {
-    if (isSuperAdmin) {
+    if (canManage) {
       fetchFederations()
         .then(setFederations)
         .catch(() => setFederations([]))
     }
-  }, [isSuperAdmin])
+  }, [canManage])
 
   async function handleRemoveAssignment(assignment: ProductFederationAssignment) {
     if (!product) return
@@ -136,7 +135,7 @@ export default function Page() {
         description={product ? product.name : undefined}
         action={
           <div className="flex gap-2">
-            {isSuperAdmin && product ? (
+            {canManage && product ? (
               <Button variant="outline" size="lg" onClick={() => setEditOpen(true)}>
                 <Pencil className="size-4" />
                 Редактировать
@@ -149,10 +148,16 @@ export default function Page() {
           </div>
         }
       />
-      {isSuperAdmin && product ? (
-        <ProductFormDialog open={editOpen} onOpenChange={setEditOpen} product={product} onSaved={() => load()} />
+      {canManage && product ? (
+        <ProductFormDialog
+          open={editOpen}
+          onOpenChange={setEditOpen}
+          product={product}
+          allowedCategories={manageableCategories}
+          onSaved={() => load()}
+        />
       ) : null}
-      {isSuperAdmin && product ? (
+      {canManage && product ? (
         <FederationAssignmentDialog
           open={assignOpen}
           onOpenChange={(next) => {
@@ -186,7 +191,7 @@ export default function Page() {
             <Card title="Продукт">
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
                 <Field label="Название" value={product.name} />
-                <Field label="Категория" value={product.category} />
+                <Field label="Категория" value={getInsuranceTypeLabel(product.category)} />
                 <Field label="Страховщик" value={product.insurer_name ?? '—'} />
                 <Field label="Статус" value={<ProductStatusBadge status={product.status} />} />
                 <Field
@@ -206,7 +211,7 @@ export default function Page() {
             <Card
               title="Назначения федераций"
               action={
-                isSuperAdmin ? (
+                canManage ? (
                   <Button
                     variant="outline"
                     size="sm"
@@ -226,7 +231,7 @@ export default function Page() {
                     <table className="w-full min-w-[640px] border-collapse text-sm">
                       <thead>
                         <tr className="border-b border-border bg-muted/40 text-left">
-                          {['Федерация', 'Цена', 'Активно', ...(isSuperAdmin ? ['Действия'] : [])].map((h) => (
+                          {['Федерация', 'Цена', 'Активно', ...(canManage ? ['Действия'] : [])].map((h) => (
                             <th
                               key={h}
                               className="px-4 py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground"
@@ -258,7 +263,7 @@ export default function Page() {
                                 </span>
                               )}
                             </td>
-                            {isSuperAdmin ? (
+                            {canManage ? (
                               <td className="px-4 py-3 whitespace-nowrap">
                                 <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
                                   <Button

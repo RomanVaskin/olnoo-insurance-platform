@@ -54,6 +54,7 @@ export type FederationSummary = {
 export type ProductSummary = {
   id: string
   name: string
+  category: string
 }
 
 export type PaymentSummary = {
@@ -70,7 +71,7 @@ export type PaymentSummary = {
 export type PolicySummary = {
   id: string
   policy_number: string
-  status: string
+  status: PolicyStatus
   valid_from: string
   valid_to: string
   policy_url: string | null
@@ -325,7 +326,7 @@ export type AthletePayment = PaymentSummary & {
 export type AthletePolicy = {
   id: string
   policy_number: string
-  status: string
+  status: PolicyStatus
   valid_from: string
   valid_to: string
   policy_url: string | null

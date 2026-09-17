@@ -30,11 +30,13 @@ export function ChangeProductDialog({
   open,
   onOpenChange,
   application,
+  allowedCategories,
   onSaved,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   application: ApplicationDetail
+  allowedCategories?: string[]
   onSaved: (application: ApplicationDetail) => void
 }) {
   const [products, setProducts] = useState<Product[]>([])
@@ -48,10 +50,16 @@ export function ChangeProductDialog({
       setError(null)
       setSubmitting(false)
       fetchProducts()
-        .then(setProducts)
+        .then((result) => {
+          setProducts(
+            allowedCategories
+              ? result.filter((product) => allowedCategories.includes(product.category))
+              : result,
+          )
+        })
         .catch(() => setProducts([]))
     }
-  }, [open, application])
+  }, [open, application, allowedCategories])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
