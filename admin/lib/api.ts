@@ -260,6 +260,60 @@ export async function fetchAthlete(id: string): Promise<AthleteDetail> {
   return res.json()
 }
 
+// Shape returned by POST/PATCH /api/athletes — same person + membership shapes as
+// AthleteDetail, minus applications/payments/policies (which don't apply to a write).
+export type AthleteWriteResult = {
+  person: AthletePerson
+  federation_memberships: AthleteFederationMembership[]
+}
+
+export type AthleteInput = {
+  last_name: string
+  first_name: string
+  patronymic: string | null
+  birthdate: string | null
+  gender: string | null
+  phone: string | null
+  email: string | null
+  federation_id?: string
+  club?: string | null
+  coach?: string | null
+  grade?: string | null
+  weight?: number | null
+  sport_name?: string | null
+  membership_status?: string
+}
+
+export async function createAthlete(input: AthleteInput): Promise<AthleteWriteResult> {
+  const res = await fetch('/api/athletes', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
+export async function updateAthlete(id: string, input: Partial<AthleteInput>): Promise<AthleteWriteResult> {
+  const res = await fetch(`/api/athletes/${id}`, {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
 export type Federation = {
   id: string
   name: string

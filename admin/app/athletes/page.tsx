@@ -1,34 +1,37 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Inbox, ShieldX, Users } from 'lucide-react'
+import { Inbox, Plus, ShieldX, Users } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
+import { Button } from '@/components/ui/button'
 import { InsuredStatusBadge } from '@/components/athletes/insured-status-badge'
+import { AthleteFormDialog } from '@/components/athletes/athlete-form-dialog'
 import { StatePanel } from '@/components/applications/state-panel'
-import { ApiError, fetchAthletes, type Athlete } from '@/lib/api'
+import { useAccount } from '@/lib/auth-context'
+import { ApiError, fetchAthletes, fetchFederations, type Athlete, type Federation } from '@/lib/api'
 import { formatPersonName } from '@/lib/utils'
 
 type LoadState = 'loading' | 'ready' | 'forbidden' | 'error'
 
 export default function Page() {
   const router = useRouter()
+  const account = useAccount()
+  const isSuperAdmin = account?.role === 'super_admin'
   const [athletes, setAthletes] = useState<Athlete[]>([])
+  const [federations, setFederations] = useState<Federation[]>([])
   const [state, setState] = useState<LoadState>('loading')
+  const [createOpen, setCreateOpen] = useState(false)
 
-  useEffect(() => {
-    let cancelled = false
-
+  const load = useCallback(() => {
     setState('loading')
 
-    fetchAthletes()
+    return fetchAthletes()
       .then((result) => {
-        if (cancelled) return
         setAthletes(result)
         setState('ready')
       })
       .catch((err) => {
-        if (cancelled) return
         if (err instanceof ApiError && err.status === 401) {
           router.replace('/login')
           return
@@ -39,15 +42,42 @@ export default function Page() {
         }
         setState('error')
       })
-
-    return () => {
-      cancelled = true
-    }
   }, [router])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  useEffect(() => {
+    if (isSuperAdmin) {
+      fetchFederations()
+        .then(setFederations)
+        .catch(() => setFederations([]))
+    }
+  }, [isSuperAdmin])
 
   return (
     <>
-      <PageHeader title="Спортсмены" description="Спортсмены федераций и их страховой статус" />
+      <PageHeader
+        title="Спортсмены"
+        description="Спортсмены федераций и их страховой статус"
+        action={
+          isSuperAdmin ? (
+            <Button size="lg" onClick={() => setCreateOpen(true)}>
+              <Plus className="size-4" />
+              Создать спортсмена
+            </Button>
+          ) : undefined
+        }
+      />
+      {isSuperAdmin ? (
+        <AthleteFormDialog
+          open={createOpen}
+          onOpenChange={setCreateOpen}
+          federations={federations}
+          onSaved={() => load()}
+        />
+      ) : null}
       <div className="px-6 py-8 lg:px-10">
         {state === 'loading' ? (
           <div className="overflow-hidden rounded-xl border border-border">
