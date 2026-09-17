@@ -908,7 +908,7 @@ export async function revokeUserInsuranceAccess(id: string, insuranceType: strin
   return res.json()
 }
 
-export type DocumentType = 'passport' | 'birth_certificate'
+export type DocumentType = 'passport' | 'birth_certificate' | 'other'
 
 export type OcrExtractedData = {
   documentType: string
@@ -927,12 +927,14 @@ export type OcrExtractedData = {
 
 export type DocumentRecord = {
   id: string
-  person_id: string
-  application_id: string | null
-  type: string
+  type: DocumentType
   status: string
   extracted_data: OcrExtractedData | null
   created_at: string
+  can_manage: boolean
+  person: PersonSummary | null
+  application: { id: string; status: ApplicationStatus } | null
+  policy: { id: string; policy_number: string; status: PolicyStatus } | null
 }
 
 export type PaymentSettings = {
@@ -1108,9 +1110,15 @@ export async function deletePaymentRouting(id: string): Promise<{ ok: boolean }>
   return res.json()
 }
 
-export async function recognizeDocument(file: File): Promise<OcrExtractedData> {
+export async function recognizeDocument(
+  file: File,
+  personId: string,
+  applicationId?: string | null,
+): Promise<OcrExtractedData> {
   const form = new FormData()
   form.append('file', file)
+  form.append('person_id', personId)
+  if (applicationId) form.append('application_id', applicationId)
 
   const res = await fetch('/api/documents/recognize', {
     method: 'POST',
@@ -1154,6 +1162,51 @@ export async function createDocument(params: {
     throw await apiErrorFromResponse(res)
   }
 
+  return res.json()
+}
+
+export async function fetchDocuments(type?: DocumentType): Promise<DocumentRecord[]> {
+  const query = type ? `?type=${encodeURIComponent(type)}` : ''
+  const res = await fetch(`/api/documents${query}`, { credentials: 'include' })
+  if (!res.ok) throw await apiErrorFromResponse(res)
+  return res.json()
+}
+
+export async function fetchDocument(id: string): Promise<DocumentRecord> {
+  const res = await fetch(`/api/documents/${id}`, { credentials: 'include' })
+  if (!res.ok) throw await apiErrorFromResponse(res)
+  return res.json()
+}
+
+export async function updateDocument(
+  id: string,
+  changes: { type?: DocumentType; extracted_data?: OcrExtractedData | null },
+): Promise<DocumentRecord> {
+  const res = await fetch(`/api/documents/${id}`, {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(changes),
+  })
+  if (!res.ok) throw await apiErrorFromResponse(res)
+  return res.json()
+}
+
+export async function recognizeStoredDocument(id: string): Promise<DocumentRecord> {
+  const res = await fetch(`/api/documents/${id}/recognize`, {
+    method: 'POST',
+    credentials: 'include',
+  })
+  if (!res.ok) throw await apiErrorFromResponse(res)
+  return res.json()
+}
+
+export async function deleteDocument(id: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/documents/${id}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  })
+  if (!res.ok) throw await apiErrorFromResponse(res)
   return res.json()
 }
 

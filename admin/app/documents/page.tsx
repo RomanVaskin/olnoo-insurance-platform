@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   CheckCircle2,
@@ -12,14 +12,17 @@ import {
 } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
+import { StatePanel } from '@/components/applications/state-panel'
 import {
   ApiError,
   createDocument,
+  fetchDocuments,
   recognizeDocument,
   type DocumentRecord,
   type DocumentType,
   type OcrExtractedData,
 } from '@/lib/api'
+import { formatDateTime, formatPersonName } from '@/lib/utils'
 
 const inputClass =
   'h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none transition-colors hover:border-foreground/30 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50'
@@ -27,6 +30,7 @@ const inputClass =
 const documentTypes: { value: DocumentType; label: string }[] = [
   { value: 'passport', label: 'Паспорт' },
   { value: 'birth_certificate', label: 'Свидетельство о рождении' },
+  { value: 'other', label: 'Другой' },
 ]
 
 const extractedFields: { key: keyof OcrExtractedData; label: string }[] = [
@@ -70,11 +74,34 @@ export default function DocumentsPage() {
   const [recognizeError, setRecognizeError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [savedDoc, setSavedDoc] = useState<DocumentRecord | null>(null)
+  const [documents, setDocuments] = useState<DocumentRecord[]>([])
+  const [listError, setListError] = useState(false)
+  const [filter, setFilter] = useState<DocumentType | ''>('')
 
   const personIdValid = UUID_RE.test(personId.trim())
   const applicationIdValid = applicationId.trim() === '' || UUID_RE.test(applicationId.trim())
 
-  const canRecognize = useMemo(() => file !== null && step === 'form', [file, step])
+  const canRecognize = useMemo(
+    () => file !== null && personIdValid && applicationIdValid && step === 'form',
+    [file, personIdValid, applicationIdValid, step],
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    fetchDocuments(filter || undefined)
+      .then((result) => {
+        if (!cancelled) {
+          setDocuments(result)
+          setListError(false)
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return
+        if (err instanceof ApiError && err.status === 401) router.replace('/login')
+        else setListError(true)
+      })
+    return () => { cancelled = true }
+  }, [filter, router, savedDoc])
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     setFile(e.target.files?.[0] ?? null)
@@ -88,7 +115,7 @@ export default function DocumentsPage() {
     setRecognizeError(null)
 
     try {
-      const data = await recognizeDocument(file)
+      const data = await recognizeDocument(file, personId.trim(), applicationId.trim() || null)
       setExtracted(data)
       setStep('review')
     } catch (err) {
@@ -203,6 +230,37 @@ export default function DocumentsPage() {
                   </label>
                 </Field>
 
+                <div className="grid gap-5 sm:grid-cols-2">
+                  <Field label="ID персоны">
+                    <input
+                      type="text"
+                      placeholder="00000000-0000-0000-0000-000000000000"
+                      value={personId}
+                      onChange={(e) => setPersonId(e.target.value)}
+                      disabled={step !== 'form'}
+                      aria-invalid={personId.length > 0 && !personIdValid}
+                      className={inputClass}
+                    />
+                  </Field>
+                  <Field label="ID заявки (опционально)">
+                    <input
+                      type="text"
+                      placeholder="00000000-0000-0000-0000-000000000000"
+                      value={applicationId}
+                      onChange={(e) => setApplicationId(e.target.value)}
+                      disabled={step !== 'form'}
+                      aria-invalid={applicationId.length > 0 && !applicationIdValid}
+                      className={inputClass}
+                    />
+                  </Field>
+                </div>
+                {personId.length > 0 && !personIdValid && (
+                  <p className="text-sm text-destructive">Некорректный формат ID персоны.</p>
+                )}
+                {applicationId.length > 0 && !applicationIdValid && (
+                  <p className="text-sm text-destructive">Некорректный формат ID заявки.</p>
+                )}
+
                 {recognizeError && <p className="text-sm text-destructive">{recognizeError}</p>}
 
                 {(step === 'form' || step === 'recognizing') && (
@@ -252,40 +310,6 @@ export default function DocumentsPage() {
                     </Field>
                   ))}
                 </div>
-
-                <h2 className="mt-6 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                  Привязка
-                </h2>
-                <div className="mt-4 grid gap-5 sm:grid-cols-2">
-                  <Field label="ID персоны (person_id)">
-                    <input
-                      type="text"
-                      placeholder="00000000-0000-0000-0000-000000000000"
-                      value={personId}
-                      onChange={(e) => setPersonId(e.target.value)}
-                      disabled={step !== 'review'}
-                      aria-invalid={personId.length > 0 && !personIdValid}
-                      className={inputClass}
-                    />
-                  </Field>
-                  <Field label="ID заявки (application_id, опционально)">
-                    <input
-                      type="text"
-                      placeholder="00000000-0000-0000-0000-000000000000"
-                      value={applicationId}
-                      onChange={(e) => setApplicationId(e.target.value)}
-                      disabled={step !== 'review'}
-                      aria-invalid={applicationId.length > 0 && !applicationIdValid}
-                      className={inputClass}
-                    />
-                  </Field>
-                </div>
-                {personId.length > 0 && !personIdValid && (
-                  <p className="mt-2 text-sm text-destructive">Некорректный формат ID персоны.</p>
-                )}
-                {applicationId.length > 0 && !applicationIdValid && (
-                  <p className="mt-2 text-sm text-destructive">Некорректный формат ID заявки.</p>
-                )}
 
                 {saveError && <p className="mt-4 text-sm text-destructive">{saveError}</p>}
 
@@ -349,6 +373,55 @@ export default function DocumentsPage() {
               </div>
             )}
           </div>
+        </div>
+
+        <div className="mt-10">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold tracking-tight">Загруженные документы</h2>
+            <select
+              value={filter}
+              onChange={(e) => setFilter(e.target.value as DocumentType | '')}
+              className={`${inputClass} w-auto min-w-56`}
+              aria-label="Фильтр по типу документа"
+            >
+              <option value="">Все типы</option>
+              {documentTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
+            </select>
+          </div>
+          {listError ? (
+            <StatePanel icon={FileScan} message="Не удалось загрузить список документов." />
+          ) : documents.length === 0 ? (
+            <StatePanel icon={FileScan} message="Документы не найдены." />
+          ) : (
+            <div className="overflow-hidden rounded-xl border border-border">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[760px] border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/40 text-left">
+                      {['Тип', 'Владелец', 'Заявка', 'OCR', 'Загружен'].map((heading) => (
+                        <th key={heading} className="px-4 py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">{heading}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {documents.map((document) => (
+                      <tr
+                        key={document.id}
+                        onClick={() => router.push(`/documents/${document.id}`)}
+                        className="cursor-pointer border-b border-border last:border-0 transition-colors hover:bg-muted/40"
+                      >
+                        <td className="px-4 py-3">{documentTypes.find((type) => type.value === document.type)?.label ?? document.type}</td>
+                        <td className="px-4 py-3">{document.person ? formatPersonName(document.person) : '—'}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{document.application?.id ?? '—'}</td>
+                        <td className="px-4 py-3">{document.extracted_data ? 'Распознан' : 'Нет данных'}</td>
+                        <td className="px-4 py-3 text-muted-foreground">{formatDateTime(document.created_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </>
