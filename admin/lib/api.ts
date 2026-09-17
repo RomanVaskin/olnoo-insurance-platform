@@ -332,6 +332,51 @@ export async function fetchFederation(id: string): Promise<FederationDetail> {
   return res.json()
 }
 
+// Shape returned by POST/PATCH /api/federations — narrower than the list/detail
+// shapes above, which also carry derived counts the write endpoints don't compute.
+export type FederationRecord = {
+  id: string
+  name: string
+  slug: string
+  status: string
+}
+
+export type FederationInput = {
+  name: string
+  slug: string
+  status: string
+}
+
+export async function createFederation(input: FederationInput): Promise<FederationRecord> {
+  const res = await fetch('/api/federations', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
+export async function updateFederation(id: string, input: FederationInput): Promise<FederationRecord> {
+  const res = await fetch(`/api/federations/${id}`, {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
 export type Payment = {
   id: string
   application_id: string

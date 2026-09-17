@@ -1,13 +1,15 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, FileQuestion, Inbox, ShieldX } from 'lucide-react'
+import { ArrowLeft, FileQuestion, Inbox, Pencil, ShieldX } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
 import { FederationStatusBadge } from '@/components/federations/federation-status-badge'
+import { FederationFormDialog } from '@/components/federations/federation-form-dialog'
 import { InsuredStatusBadge } from '@/components/athletes/insured-status-badge'
 import { StatePanel } from '@/components/applications/state-panel'
+import { useAccount } from '@/lib/auth-context'
 import { ApiError, fetchFederation, type FederationDetail } from '@/lib/api'
 import { formatKopecks, formatPersonName } from '@/lib/utils'
 
@@ -36,10 +38,12 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
 export default function Page() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
+  const account = useAccount()
   const [federation, setFederation] = useState<FederationDetail | null>(null)
   const [state, setState] = useState<LoadState>('loading')
+  const [editOpen, setEditOpen] = useState(false)
 
-  useEffect(() => {
+  const load = useCallback(() => {
     let cancelled = false
 
     setState('loading')
@@ -72,6 +76,10 @@ export default function Page() {
     }
   }, [params.id, router])
 
+  useEffect(() => {
+    return load()
+  }, [load])
+
   const showFinance = federation ? federation.paid_amount_kopecks !== undefined : false
 
   return (
@@ -80,12 +88,28 @@ export default function Page() {
         title="Федерация"
         description={federation ? federation.federation.name : undefined}
         action={
-          <Button variant="outline" size="lg" onClick={() => router.push('/federations')}>
-            <ArrowLeft className="size-4" />
-            К списку
-          </Button>
+          <div className="flex gap-2">
+            {account?.role === 'super_admin' && federation ? (
+              <Button variant="outline" size="lg" onClick={() => setEditOpen(true)}>
+                <Pencil className="size-4" />
+                Редактировать
+              </Button>
+            ) : null}
+            <Button variant="outline" size="lg" onClick={() => router.push('/federations')}>
+              <ArrowLeft className="size-4" />
+              К списку
+            </Button>
+          </div>
         }
       />
+      {account?.role === 'super_admin' && federation ? (
+        <FederationFormDialog
+          open={editOpen}
+          onOpenChange={setEditOpen}
+          federation={federation.federation}
+          onSaved={() => load()}
+        />
+      ) : null}
       <div className="px-6 py-8 lg:px-10">
         {state === 'loading' ? (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">

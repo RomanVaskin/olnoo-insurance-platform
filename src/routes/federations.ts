@@ -5,8 +5,9 @@ import {
   getAccessibleFederationIds,
   isFinanceAllowed,
   requireFederationMembership,
+  requireRole,
 } from '../modules/auth/guards';
-import { assertUuid, NotFoundError, toNumber } from '../lib/api-helpers';
+import { assertUuid, BadRequestError, NotFoundError, toNumber } from '../lib/api-helpers';
 
 const LIST_SELECT = `
   SELECT
@@ -18,6 +19,50 @@ const LIST_SELECT = `
        WHERE a.federation_id = f.id AND pay.status = 'paid') AS paid_amount_kopecks
   FROM federations f
 `;
+
+// federations.status has no DB CHECK constraint, but the admin UI (FederationStatusBadge)
+// only renders these two values — writes are restricted to them to keep data consistent.
+const STATUS_VALUES = ['active', 'inactive'];
+
+// Mirrors the slug format already used by seeded/production federations (lowercase,
+// hyphen-separated). federations.slug has no DB format constraint of its own, only
+// NOT NULL + UNIQUE, so this is an input-hygiene guard, not an invented DB rule.
+const SLUG_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+function mapFederation(row: Record<string, unknown>) {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    slug: row.slug as string,
+    status: row.status as string,
+  };
+}
+
+function assertFederationName(value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new BadRequestError('name_required');
+  }
+  return value.trim();
+}
+
+function assertFederationSlug(value: unknown): string {
+  if (typeof value !== 'string' || !SLUG_RE.test(value)) {
+    throw new BadRequestError('invalid_slug');
+  }
+  return value;
+}
+
+function assertFederationStatus(value: unknown): string {
+  if (typeof value !== 'string' || !STATUS_VALUES.includes(value)) {
+    throw new BadRequestError('invalid_status');
+  }
+  return value;
+}
+
+/** Translates a Postgres unique_violation (slug) into the route's 400 contract. */
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { code?: string }).code === '23505';
+}
 
 export async function federationsRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/federations', async (request, reply) => {
@@ -151,4 +196,90 @@ export async function federationsRoutes(app: FastifyInstance): Promise<void> {
 
     return reply.status(200).send(response);
   });
+
+  app.post<{ Body: { name?: unknown; slug?: unknown; status?: unknown } }>(
+    '/api/federations',
+    async (request, reply) => {
+      const account = await authenticate(request);
+      requireRole(account, ['super_admin']);
+
+      const body = request.body ?? {};
+      const name = assertFederationName(body.name);
+      const slug = assertFederationSlug(body.slug);
+      const status = body.status === undefined ? 'active' : assertFederationStatus(body.status);
+
+      let federation;
+      try {
+        const result = await pool.query(
+          `INSERT INTO federations (name, slug, status) VALUES ($1, $2, $3)
+           RETURNING id, name, slug, status`,
+          [name, slug, status],
+        );
+        federation = result.rows[0];
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          throw new BadRequestError('slug_taken');
+        }
+        throw error;
+      }
+
+      return reply.status(201).send(mapFederation(federation));
+    },
+  );
+
+  app.patch<{ Params: { id: string }; Body: { name?: unknown; slug?: unknown; status?: unknown } }>(
+    '/api/federations/:id',
+    async (request, reply) => {
+      const account = await authenticate(request);
+      requireRole(account, ['super_admin']);
+      assertUuid(request.params.id);
+
+      const body = request.body ?? {};
+      const updates: string[] = [];
+      const values: unknown[] = [];
+
+      if (body.name !== undefined) {
+        values.push(assertFederationName(body.name));
+        updates.push(`name = $${values.length}`);
+      }
+      if (body.slug !== undefined) {
+        values.push(assertFederationSlug(body.slug));
+        updates.push(`slug = $${values.length}`);
+      }
+      if (body.status !== undefined) {
+        values.push(assertFederationStatus(body.status));
+        updates.push(`status = $${values.length}`);
+      }
+
+      if (updates.length === 0) {
+        throw new BadRequestError('no_fields_to_update');
+      }
+
+      values.push(request.params.id);
+
+      let federation;
+      try {
+        const result = await pool.query(
+          `UPDATE federations SET ${updates.join(', ')}, updated_at = now()
+           WHERE id = $${values.length}
+           RETURNING id, name, slug, status`,
+          values,
+        );
+        federation = result.rows[0];
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          throw new BadRequestError('slug_taken');
+        }
+        throw error;
+      }
+
+      if (!federation) {
+        throw new NotFoundError('federation_not_found');
+      }
+
+      // id is never part of `updates` above — the WHERE clause pins the row by
+      // its existing id, so it is preserved by construction.
+      return reply.status(200).send(mapFederation(federation));
+    },
+  );
 }

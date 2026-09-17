@@ -1,11 +1,14 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Building2, Inbox, ShieldX } from 'lucide-react'
+import { Building2, Inbox, Plus, ShieldX } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
+import { Button } from '@/components/ui/button'
 import { FederationStatusBadge } from '@/components/federations/federation-status-badge'
+import { FederationFormDialog } from '@/components/federations/federation-form-dialog'
 import { StatePanel } from '@/components/applications/state-panel'
+import { useAccount } from '@/lib/auth-context'
 import { ApiError, fetchFederations, type Federation } from '@/lib/api'
 import { formatKopecks } from '@/lib/utils'
 
@@ -13,22 +16,20 @@ type LoadState = 'loading' | 'ready' | 'forbidden' | 'error'
 
 export default function Page() {
   const router = useRouter()
+  const account = useAccount()
   const [federations, setFederations] = useState<Federation[]>([])
   const [state, setState] = useState<LoadState>('loading')
+  const [createOpen, setCreateOpen] = useState(false)
 
-  useEffect(() => {
-    let cancelled = false
-
+  const load = useCallback(() => {
     setState('loading')
 
-    fetchFederations()
+    return fetchFederations()
       .then((result) => {
-        if (cancelled) return
         setFederations(result)
         setState('ready')
       })
       .catch((err) => {
-        if (cancelled) return
         if (err instanceof ApiError && err.status === 401) {
           router.replace('/login')
           return
@@ -39,17 +40,35 @@ export default function Page() {
         }
         setState('error')
       })
-
-    return () => {
-      cancelled = true
-    }
   }, [router])
+
+  useEffect(() => {
+    load()
+  }, [load])
 
   const showFinance = federations.length > 0 && federations[0].paid_amount_kopecks !== undefined
 
   return (
     <>
-      <PageHeader title="Федерации" description="Федерации, подключённые к платформе" />
+      <PageHeader
+        title="Федерации"
+        description="Федерации, подключённые к платформе"
+        action={
+          account?.role === 'super_admin' ? (
+            <Button size="lg" onClick={() => setCreateOpen(true)}>
+              <Plus className="size-4" />
+              Создать федерацию
+            </Button>
+          ) : undefined
+        }
+      />
+      {account?.role === 'super_admin' ? (
+        <FederationFormDialog
+          open={createOpen}
+          onOpenChange={setCreateOpen}
+          onSaved={() => load()}
+        />
+      ) : null}
       <div className="px-6 py-8 lg:px-10">
         {state === 'loading' ? (
           <div className="overflow-hidden rounded-xl border border-border">
