@@ -475,6 +475,99 @@ export async function fetchProduct(id: string): Promise<ProductDetail> {
   return res.json()
 }
 
+export type ProductInput = {
+  name: string
+  category: string
+  insurer_name: string | null
+  coverage_amount_kopecks: number | null
+  validity_days: number
+  base_price_kopecks: number
+  status: string
+}
+
+export async function createProduct(input: ProductInput): Promise<Product> {
+  const res = await fetch('/api/products', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
+export async function updateProduct(id: string, input: Partial<ProductInput>): Promise<Product> {
+  const res = await fetch(`/api/products/${id}`, {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
+export async function assignProductToFederation(
+  productId: string,
+  input: { federation_id: string; price_kopecks: number; active?: boolean },
+): Promise<ProductFederationAssignment> {
+  const res = await fetch(`/api/products/${productId}/federations`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
+export async function updateProductFederationAssignment(
+  productId: string,
+  federationId: string,
+  input: { price_kopecks?: number; active?: boolean },
+): Promise<ProductFederationAssignment> {
+  const res = await fetch(`/api/products/${productId}/federations/${federationId}`, {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
+export async function removeProductFederationAssignment(
+  productId: string,
+  federationId: string,
+): Promise<ProductFederationAssignment> {
+  const res = await fetch(`/api/products/${productId}/federations/${federationId}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
 export type DocumentType = 'passport' | 'birth_certificate'
 
 export type OcrExtractedData = {

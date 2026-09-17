@@ -1,11 +1,14 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Inbox, PackageSearch, ShieldX } from 'lucide-react'
+import { Inbox, PackageSearch, Plus, ShieldX } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
+import { Button } from '@/components/ui/button'
 import { ProductStatusBadge } from '@/components/products/product-status-badge'
+import { ProductFormDialog } from '@/components/products/product-form-dialog'
 import { StatePanel } from '@/components/applications/state-panel'
+import { useAccount } from '@/lib/auth-context'
 import { ApiError, fetchProducts, type Product } from '@/lib/api'
 import { formatKopecks } from '@/lib/utils'
 
@@ -13,22 +16,20 @@ type LoadState = 'loading' | 'ready' | 'forbidden' | 'error'
 
 export default function Page() {
   const router = useRouter()
+  const account = useAccount()
   const [products, setProducts] = useState<Product[]>([])
   const [state, setState] = useState<LoadState>('loading')
+  const [createOpen, setCreateOpen] = useState(false)
 
-  useEffect(() => {
-    let cancelled = false
-
+  const load = useCallback(() => {
     setState('loading')
 
-    fetchProducts()
+    return fetchProducts()
       .then((result) => {
-        if (cancelled) return
         setProducts(result)
         setState('ready')
       })
       .catch((err) => {
-        if (cancelled) return
         if (err instanceof ApiError && err.status === 401) {
           router.replace('/login')
           return
@@ -39,15 +40,29 @@ export default function Page() {
         }
         setState('error')
       })
-
-    return () => {
-      cancelled = true
-    }
   }, [router])
+
+  useEffect(() => {
+    load()
+  }, [load])
 
   return (
     <>
-      <PageHeader title="Страховые продукты" description="Каталог страховых продуктов платформы" />
+      <PageHeader
+        title="Страховые продукты"
+        description="Каталог страховых продуктов платформы"
+        action={
+          account?.role === 'super_admin' ? (
+            <Button size="lg" onClick={() => setCreateOpen(true)}>
+              <Plus className="size-4" />
+              Создать продукт
+            </Button>
+          ) : undefined
+        }
+      />
+      {account?.role === 'super_admin' ? (
+        <ProductFormDialog open={createOpen} onOpenChange={setCreateOpen} onSaved={() => load()} />
+      ) : null}
       <div className="px-6 py-8 lg:px-10">
         {state === 'loading' ? (
           <div className="overflow-hidden rounded-xl border border-border">

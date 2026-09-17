@@ -1,13 +1,24 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, FileQuestion, Inbox, ShieldX } from 'lucide-react'
+import { ArrowLeft, FileQuestion, Inbox, Pencil, ShieldX, UserRoundX } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
 import { ProductStatusBadge } from '@/components/products/product-status-badge'
+import { ProductFormDialog } from '@/components/products/product-form-dialog'
+import { FederationAssignmentDialog } from '@/components/products/federation-assignment-dialog'
 import { StatePanel } from '@/components/applications/state-panel'
-import { ApiError, fetchProduct, type ProductDetail } from '@/lib/api'
+import { useAccount } from '@/lib/auth-context'
+import {
+  ApiError,
+  fetchFederations,
+  fetchProduct,
+  removeProductFederationAssignment,
+  type Federation,
+  type ProductDetail,
+  type ProductFederationAssignment,
+} from '@/lib/api'
 import { formatKopecks } from '@/lib/utils'
 
 type LoadState = 'loading' | 'ready' | 'forbidden' | 'not_found' | 'error'
@@ -23,10 +34,21 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
+function Card({
+  title,
+  action,
+  children,
+}: {
+  title: string
+  action?: React.ReactNode
+  children: React.ReactNode
+}) {
   return (
     <div className="rounded-xl border border-border bg-card px-5 py-5">
-      <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
+        {action}
+      </div>
       <div className="mt-4 space-y-4">{children}</div>
     </div>
   )
@@ -35,10 +57,17 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
 export default function Page() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
+  const account = useAccount()
+  const isSuperAdmin = account?.role === 'super_admin'
   const [product, setProduct] = useState<ProductDetail | null>(null)
+  const [federations, setFederations] = useState<Federation[]>([])
   const [state, setState] = useState<LoadState>('loading')
+  const [editOpen, setEditOpen] = useState(false)
+  const [assignOpen, setAssignOpen] = useState(false)
+  const [editingAssignment, setEditingAssignment] = useState<ProductFederationAssignment | null>(null)
+  const [removingId, setRemovingId] = useState<string | null>(null)
 
-  useEffect(() => {
+  const load = useCallback(() => {
     let cancelled = false
 
     setState('loading')
@@ -71,18 +100,68 @@ export default function Page() {
     }
   }, [params.id, router])
 
+  useEffect(() => {
+    return load()
+  }, [load])
+
+  useEffect(() => {
+    if (isSuperAdmin) {
+      fetchFederations()
+        .then(setFederations)
+        .catch(() => setFederations([]))
+    }
+  }, [isSuperAdmin])
+
+  async function handleRemoveAssignment(assignment: ProductFederationAssignment) {
+    if (!product) return
+    if (!window.confirm(`Снять федерацию «${assignment.federation.name}» с этого продукта?`)) {
+      return
+    }
+    setRemovingId(assignment.id)
+    try {
+      await removeProductFederationAssignment(product.id, assignment.federation.id)
+      load()
+    } finally {
+      setRemovingId(null)
+    }
+  }
+
   return (
     <>
       <PageHeader
         title="Страховой продукт"
         description={product ? product.name : undefined}
         action={
-          <Button variant="outline" size="lg" onClick={() => router.push('/products')}>
-            <ArrowLeft className="size-4" />
-            К списку
-          </Button>
+          <div className="flex gap-2">
+            {isSuperAdmin && product ? (
+              <Button variant="outline" size="lg" onClick={() => setEditOpen(true)}>
+                <Pencil className="size-4" />
+                Редактировать
+              </Button>
+            ) : null}
+            <Button variant="outline" size="lg" onClick={() => router.push('/products')}>
+              <ArrowLeft className="size-4" />
+              К списку
+            </Button>
+          </div>
         }
       />
+      {isSuperAdmin && product ? (
+        <ProductFormDialog open={editOpen} onOpenChange={setEditOpen} product={product} onSaved={() => load()} />
+      ) : null}
+      {isSuperAdmin && product ? (
+        <FederationAssignmentDialog
+          open={assignOpen}
+          onOpenChange={(next) => {
+            setAssignOpen(next)
+            if (!next) setEditingAssignment(null)
+          }}
+          productId={product.id}
+          federations={federations}
+          assignment={editingAssignment}
+          onSaved={() => load()}
+        />
+      ) : null}
       <div className="px-6 py-8 lg:px-10">
         {state === 'loading' ? (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -121,14 +200,30 @@ export default function Page() {
               </div>
             </Card>
 
-            <Card title="Назначения федераций">
+            <Card
+              title="Назначения федераций"
+              action={
+                isSuperAdmin ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setEditingAssignment(null)
+                      setAssignOpen(true)
+                    }}
+                  >
+                    Назначить федерации
+                  </Button>
+                ) : undefined
+              }
+            >
               {product.federation_assignments.length > 0 ? (
                 <div className="overflow-hidden rounded-xl border border-border">
                   <div className="overflow-x-auto">
                     <table className="w-full min-w-[640px] border-collapse text-sm">
                       <thead>
                         <tr className="border-b border-border bg-muted/40 text-left">
-                          {['Федерация', 'Цена', 'Активно'].map((h) => (
+                          {['Федерация', 'Цена', 'Активно', ...(isSuperAdmin ? ['Действия'] : [])].map((h) => (
                             <th
                               key={h}
                               className="px-4 py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground"
@@ -160,6 +255,32 @@ export default function Page() {
                                 </span>
                               )}
                             </td>
+                            {isSuperAdmin ? (
+                              <td className="px-4 py-3 whitespace-nowrap">
+                                <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    onClick={() => {
+                                      setEditingAssignment(a)
+                                      setAssignOpen(true)
+                                    }}
+                                  >
+                                    <Pencil className="size-3.5" />
+                                  </Button>
+                                  {a.active ? (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon-sm"
+                                      disabled={removingId === a.id}
+                                      onClick={() => handleRemoveAssignment(a)}
+                                    >
+                                      <UserRoundX className="size-3.5" />
+                                    </Button>
+                                  ) : null}
+                                </div>
+                              </td>
+                            ) : null}
                           </tr>
                         ))}
                       </tbody>
