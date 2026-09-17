@@ -13,6 +13,7 @@ import {
   Wallet,
   PackageSearch,
   Settings,
+  UserCog,
 } from 'lucide-react'
 
 export type NavItem = { label: string; href: string; icon: LucideIcon }
@@ -30,6 +31,7 @@ const superAdminNav: NavItem[] = [
   { label: 'Заявки', href: '/applications', icon: Inbox },
   { label: 'Документы', href: '/documents', icon: FileScan },
   { label: 'Платежи', href: '/payments', icon: Wallet },
+  { label: 'Пользователи', href: '/users', icon: UserCog },
   { label: 'Настройки', href: '/settings', icon: Settings },
 ]
 

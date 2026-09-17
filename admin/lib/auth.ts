@@ -9,6 +9,8 @@ export const ROLE_LABELS: Record<string, string> = {
   federation_secretary: 'Секретарь федерации',
   federation_director: 'Руководитель федерации',
   super_admin: 'Администратор',
+  athlete: 'Спортсмен',
+  guardian: 'Опекун',
 }
 
 export function getRoleLabel(role: string): string {

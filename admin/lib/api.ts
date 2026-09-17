@@ -622,6 +622,119 @@ export async function removeProductFederationAssignment(
   return res.json()
 }
 
+// Users & Roles — manages platform staff accounts (super_admin, federation_secretary,
+// federation_director) only. Athlete/guardian accounts are never created or edited here;
+// see Athletes CRUD (fetchAthletes/fetchAthlete) for those.
+export type UserPersonSummary = {
+  id: string
+  last_name: string
+  first_name: string
+  patronymic: string | null
+}
+
+export type UserFederationAssignment = {
+  id: string
+  name: string
+  role: string
+} | null
+
+export type PlatformUser = {
+  id: string
+  email: string | null
+  phone: string | null
+  role: string
+  status: string
+  person: UserPersonSummary | null
+  federation: UserFederationAssignment
+  created_at: string
+  updated_at: string
+}
+
+export async function fetchUsers(): Promise<PlatformUser[]> {
+  const res = await fetch('/api/users', {
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw new ApiError(res.status)
+  }
+
+  return res.json()
+}
+
+export async function fetchUser(id: string): Promise<PlatformUser> {
+  const res = await fetch(`/api/users/${id}`, {
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw new ApiError(res.status)
+  }
+
+  return res.json()
+}
+
+export type CreateUserInput = {
+  email: string
+  phone?: string | null
+  role: string
+  password: string
+  federation_id?: string
+}
+
+export async function createUser(input: CreateUserInput): Promise<PlatformUser> {
+  const res = await fetch('/api/users', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
+export type UpdateUserInput = {
+  email?: string
+  phone?: string | null
+  status?: string
+  role?: string
+  federation_id?: string
+}
+
+export async function updateUser(id: string, input: UpdateUserInput): Promise<PlatformUser> {
+  const res = await fetch(`/api/users/${id}`, {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
+export async function resetUserPassword(id: string, password: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/users/${id}/reset-password`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
 export type DocumentType = 'passport' | 'birth_certificate'
 
 export type OcrExtractedData = {
