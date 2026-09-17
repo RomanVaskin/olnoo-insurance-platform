@@ -176,7 +176,7 @@ export type Policy = {
 export type PolicyApplicationSummary = {
   id: string
   status: ApplicationStatus
-  amount_kopecks: number
+  amount_kopecks: number | null
   created_at: string
 }
 
@@ -204,6 +204,75 @@ export async function fetchPolicy(id: string): Promise<PolicyDetail> {
 
   if (!res.ok) {
     throw new ApiError(res.status)
+  }
+
+  return res.json()
+}
+
+// Policy management — policy_number is the only directly-editable field; status
+// changes go through the explicit cancel/reactivate/expire actions.
+export async function updatePolicyNumber(id: string, policyNumber: string): Promise<PolicyDetail> {
+  const res = await fetch(`/api/policies/${id}`, {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ policy_number: policyNumber }),
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
+export async function cancelPolicy(id: string): Promise<PolicyDetail> {
+  const res = await fetch(`/api/policies/${id}/cancel`, {
+    method: 'POST',
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
+export async function reactivatePolicy(id: string): Promise<PolicyDetail> {
+  const res = await fetch(`/api/policies/${id}/reactivate`, {
+    method: 'POST',
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
+export async function expirePolicy(id: string): Promise<PolicyDetail> {
+  const res = await fetch(`/api/policies/${id}/expire`, {
+    method: 'POST',
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
+  }
+
+  return res.json()
+}
+
+export async function generatePolicyPdf(id: string): Promise<{ policy_id: string; insurer: string; policy_url: string }> {
+  const res = await fetch(`/api/policies/${id}/generate-pdf`, {
+    method: 'POST',
+    credentials: 'include',
+  })
+
+  if (!res.ok) {
+    throw await apiErrorFromResponse(res)
   }
 
   return res.json()

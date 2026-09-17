@@ -23,7 +23,24 @@ export interface GeneratePolicyPdfResult {
 }
 
 export async function generatePolicyPdf(policyId: string): Promise<GeneratePolicyPdfResult> {
-  const input = await loadPolicyGenerationInput(policyId);
+  // Serialize PDF generation with number/status corrections on the same policy.
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT id FROM policies WHERE id = $1 FOR UPDATE', [policyId]);
+    const result = await generateLockedPolicyPdf(policyId, client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function generateLockedPolicyPdf(policyId: string, client: import('pg').PoolClient): Promise<GeneratePolicyPdfResult> {
+  const input = await loadPolicyGenerationInput(policyId, client);
 
   const rawBytes =
     input.insurer === 'reso'
@@ -40,7 +57,7 @@ export async function generatePolicyPdf(policyId: string): Promise<GeneratePolic
 
     const filename = await savePolicyPdfFile(policyId, finalBytes);
 
-    await pool.query(`UPDATE policies SET policy_url = $1, updated_at = now() WHERE id = $2`, [filename, policyId]);
+    await client.query(`UPDATE policies SET policy_url = $1, updated_at = now() WHERE id = $2`, [filename, policyId]);
 
     return { policyId, insurer: input.insurer, policyUrl: filename };
   } finally {

@@ -6,6 +6,7 @@
  */
 
 import { pool } from '../../db/pool';
+import type { Pool, PoolClient } from 'pg';
 import { formatRuDate } from './date';
 import type { PolicyParticipant, PolicyPdfContext } from './templates';
 
@@ -58,8 +59,8 @@ function resolveInsurer(insurerName: string | null): InsurerCode {
   throw new UnsupportedInsurerError(`Нет PDF-шаблона для страховщика продукта: ${insurerName ?? '(не указан)'}`);
 }
 
-export async function loadPolicyGenerationInput(policyId: string): Promise<PolicyGenerationInput> {
-  const policyResult = await pool.query<PolicyRow>(
+export async function loadPolicyGenerationInput(policyId: string, db: Pool | PoolClient = pool): Promise<PolicyGenerationInput> {
+  const policyResult = await db.query<PolicyRow>(
     `SELECT
        pol.policy_number, pol.valid_from, pol.valid_to, pol.created_at AS policy_created_at, pol.federation_id,
        p.id AS person_id, p.last_name, p.first_name, p.patronymic, p.birthdate,
@@ -80,12 +81,12 @@ export async function loadPolicyGenerationInput(policyId: string): Promise<Polic
 
   const [sportResult, passportResult] = await Promise.all([
     row.federation_id
-      ? pool.query<{ sport_name: string | null }>(
+      ? db.query<{ sport_name: string | null }>(
           `SELECT sport_name FROM federation_memberships WHERE person_id = $1 AND federation_id = $2 LIMIT 1`,
           [row.person_id, row.federation_id],
         )
       : Promise.resolve({ rows: [] as Array<{ sport_name: string | null }> }),
-    pool.query<{ extracted_data: ExtractedPassportData | null }>(
+    db.query<{ extracted_data: ExtractedPassportData | null }>(
       `SELECT extracted_data FROM documents
        WHERE person_id = $1 AND type = 'passport' AND extracted_data IS NOT NULL
        ORDER BY created_at DESC LIMIT 1`,

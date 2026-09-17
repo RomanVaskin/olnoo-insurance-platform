@@ -65,6 +65,82 @@ async function assertPolicyAccess(
   }
 }
 
+/**
+ * Write-access rule for policy management (PATCH policy_number, cancel, reactivate,
+ * expire): super_admin unrestricted; 'admin' needs 'manage' permission on the policy's
+ * product category (not just 'read'); federation_secretary/director scoped to their own
+ * federation (same operational access they already have for reading/generating PDFs);
+ * athlete/guardian denied. Mirrors requireApplicationManageAccess in applications.ts.
+ */
+async function requirePolicyManageAccess(
+  account: SessionAccount,
+  record: { federationId: string | null; category: string | null },
+): Promise<void> {
+  if (account.role === 'super_admin') {
+    return;
+  }
+  if (account.role === 'admin') {
+    if (!record.category) {
+      throw new HttpError(403, 'forbidden');
+    }
+    await requireCategoryManage(account, record.category);
+    return;
+  }
+  if (account.role === 'federation_secretary' || account.role === 'federation_director') {
+    const federationIds = await getAccessibleFederationIds(account);
+    if (!record.federationId || !federationIds?.includes(record.federationId)) {
+      throw new HttpError(403, 'forbidden');
+    }
+    return;
+  }
+  throw new HttpError(403, 'forbidden');
+}
+
+async function fetchPolicyRow(id: string): Promise<Record<string, unknown> | undefined> {
+  const result = await pool.query(`${LIST_SELECT} WHERE pol.id = $1`, [id]);
+  return result.rows[0];
+}
+
+async function buildPolicyDetailResponse(row: Record<string, unknown>, account: SessionAccount) {
+  const applicationResult = await pool.query(
+    `SELECT id, status, amount_kopecks, created_at FROM applications WHERE id = $1`,
+    [row.application_id],
+  );
+  const applicationRow = applicationResult.rows[0];
+  const application = applicationRow
+    ? {
+        id: applicationRow.id,
+        status: applicationRow.status,
+        amount_kopecks: isFinanceAllowed(account.role) ? toNumber(applicationRow.amount_kopecks) : null,
+        created_at: applicationRow.created_at,
+      }
+    : null;
+
+  const payment = isFinanceAllowed(account.role)
+    ? await getLatestPaymentForApplication(row.application_id as string)
+    : null;
+
+  // The payment sub-object is finance-only data: federation_secretary must never see it.
+  const showPayment = isFinanceAllowed(account.role);
+
+  return {
+    ...mapPolicyRow(row),
+    application,
+    payment: showPayment ? payment : null,
+  };
+}
+
+/** Translates a Postgres unique_violation (policy_number) into the route's 400 contract. */
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { code?: string }).code === '23505';
+}
+
+function assertEmptyActionBody(body: unknown): void {
+  if (body !== undefined && (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length > 0)) {
+    throw new BadRequestError('invalid_fields');
+  }
+}
+
 export async function policiesRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/policies', async (request, reply) => {
     const account = await authenticate(request);
@@ -86,66 +162,34 @@ export async function policiesRoutes(app: FastifyInstance): Promise<void> {
     const account = await authenticate(request);
     assertUuid(request.params.id);
 
-    const result = await pool.query(`${LIST_SELECT} WHERE pol.id = $1`, [request.params.id]);
-    const row = result.rows[0];
+    const row = await fetchPolicyRow(request.params.id);
     if (!row) {
       throw new NotFoundError('policy_not_found');
     }
 
     await assertPolicyAccess(account, row.access_federation_id as string | null, row.access_category as string | null);
 
-    const applicationResult = await pool.query(
-      `SELECT id, status, amount_kopecks, created_at FROM applications WHERE id = $1`,
-      [row.application_id],
-    );
-    const applicationRow = applicationResult.rows[0];
-    const application = applicationRow
-      ? {
-          id: applicationRow.id,
-          status: applicationRow.status,
-          amount_kopecks: toNumber(applicationRow.amount_kopecks),
-          created_at: applicationRow.created_at,
-        }
-      : null;
-
-    const payment = await getLatestPaymentForApplication(row.application_id as string);
-
-    // The payment sub-object is finance-only data (amount, provider_payment_id,
-    // paid_at): federation_secretary must never see it. assertPolicyAccess above
-    // already excludes athletes from this route, so only staff roles reach here.
-    const showPayment = isFinanceAllowed(account.role);
-
-    return reply.status(200).send({
-      ...mapPolicyRow(row),
-      application,
-      payment: showPayment ? payment : null,
-    });
+    return reply.status(200).send(await buildPolicyDetailResponse(row, account));
   });
 
-  // Generates (or regenerates) the policy PDF from current platform data and
-  // records it as policies.policy_url. Written by staff roles (super_admin /
-  // federation_secretary / federation_director scoped to their federation) —
-  // same access rule as reading the policy.
+  // Generates (or regenerates — same endpoint, reused rather than adding a duplicate
+  // /regenerate-pdf) the policy PDF from current platform data and records it as
+  // policies.policy_url. This is a write action, so it uses requirePolicyManageAccess
+  // (admin needs 'manage', not just 'read') rather than the read-only assertPolicyAccess.
   app.post<{ Params: { id: string } }>('/api/policies/:id/generate-pdf', async (request, reply) => {
     const account = await authenticate(request);
     assertUuid(request.params.id);
 
-    const accessResult = await pool.query(
-      `SELECT pol.federation_id AS access_federation_id, ip.category AS access_category
-       FROM policies pol JOIN insurance_products ip ON ip.id = pol.product_id
-       WHERE pol.id = $1`,
-      [request.params.id],
-    );
-    const accessRow = accessResult.rows[0];
-    if (!accessRow) {
+    const row = await fetchPolicyRow(request.params.id);
+    if (!row) {
       throw new NotFoundError('policy_not_found');
     }
-    await assertPolicyAccess(account, accessRow.access_federation_id as string | null, accessRow.access_category as string | null);
-    // Generating a PDF is a write action: 'admin' needs 'manage' here, not just 'read'.
-    if (account.role === 'admin') {
-      await requireCategoryManage(account, accessRow.access_category as string);
-    }
+    await requirePolicyManageAccess(account, {
+      federationId: row.access_federation_id as string | null,
+      category: row.access_category as string | null,
+    });
 
+    assertEmptyActionBody(request.body);
     try {
       const result = await generatePolicyPdf(request.params.id);
       return reply.status(200).send({ policy_id: result.policyId, insurer: result.insurer, policy_url: result.policyUrl });
@@ -158,6 +202,161 @@ export async function policiesRoutes(app: FastifyInstance): Promise<void> {
       }
       throw error;
     }
+  });
+
+  // Number correction is limited to active, unexpired records before payment,
+  // issuance or PDF generation. Issued documents are immutable here.
+  app.patch<{ Params: { id: string }; Body: { policy_number?: unknown } }>(
+    '/api/policies/:id',
+    async (request, reply) => {
+      const account = await authenticate(request);
+      assertUuid(request.params.id);
+
+      const row = await fetchPolicyRow(request.params.id);
+      if (!row) {
+        throw new NotFoundError('policy_not_found');
+      }
+      await requirePolicyManageAccess(account, {
+        federationId: row.access_federation_id as string | null,
+        category: row.access_category as string | null,
+      });
+
+      if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body) ||
+          Object.keys(request.body).some((key) => key !== 'policy_number')) {
+        throw new BadRequestError('invalid_fields');
+      }
+      if (typeof request.body?.policy_number !== 'string' || request.body.policy_number.trim().length === 0) {
+        throw new BadRequestError('policy_number_required');
+      }
+      const policyNumber = request.body.policy_number.trim();
+      if (policyNumber.length > 200 || /[\x00-\x1f\x7f]/.test(policyNumber)) {
+        throw new BadRequestError('invalid_policy_number');
+      }
+
+      if (row.status !== 'active') {
+        throw new BadRequestError('policy_not_editable');
+      }
+
+      let updated;
+      try {
+        const result = await pool.query(
+          `UPDATE policies pol SET policy_number = $1, updated_at = now()
+           WHERE pol.id = $2 AND pol.status = 'active' AND pol.valid_to >= current_date
+             AND pol.policy_url IS NULL
+             AND EXISTS (SELECT 1 FROM applications a WHERE a.id = pol.application_id
+                         AND a.status IN ('draft', 'pending_payment'))
+             AND NOT EXISTS (SELECT 1 FROM payments pay WHERE pay.application_id = pol.application_id
+                             AND (pay.status IN ('paid', 'refunded') OR pay.paid_at IS NOT NULL))
+           RETURNING pol.id`,
+          [policyNumber, request.params.id],
+        );
+        updated = result.rows[0];
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          throw new BadRequestError('policy_number_taken');
+        }
+        throw error;
+      }
+      if (!updated) {
+        // Status changed between the read above and this write — fail rather than
+        // silently applying a stale-state edit.
+        throw new BadRequestError('policy_not_editable');
+      }
+
+      const refreshed = await fetchPolicyRow(request.params.id);
+      return reply.status(200).send(await buildPolicyDetailResponse(refreshed as Record<string, unknown>, account));
+    },
+  );
+
+  // Cancels an active policy. Cancelling never deletes or overwrites any other field
+  // (policy_number, dates, PDF) — the record and its history stay intact and inspectable.
+  app.post<{ Params: { id: string } }>('/api/policies/:id/cancel', async (request, reply) => {
+    const account = await authenticate(request);
+    assertUuid(request.params.id);
+
+    const row = await fetchPolicyRow(request.params.id);
+    if (!row) {
+      throw new NotFoundError('policy_not_found');
+    }
+    await requirePolicyManageAccess(account, {
+      federationId: row.access_federation_id as string | null,
+      category: row.access_category as string | null,
+    });
+
+    assertEmptyActionBody(request.body);
+    const result = await pool.query(
+      `UPDATE policies SET status = 'cancelled', updated_at = now() WHERE id = $1 AND status = 'active' RETURNING id`,
+      [request.params.id],
+    );
+    if (result.rowCount === 0) {
+      throw new BadRequestError('invalid_transition');
+    }
+
+    const refreshed = await fetchPolicyRow(request.params.id);
+    return reply.status(200).send(await buildPolicyDetailResponse(refreshed as Record<string, unknown>, account));
+  });
+
+  // Reactivates a cancelled policy — only while its coverage term hasn't already
+  // lapsed (valid_to in the past). An expired term needs a new application/policy,
+  // not a reactivated old one.
+  app.post<{ Params: { id: string } }>('/api/policies/:id/reactivate', async (request, reply) => {
+    const account = await authenticate(request);
+    assertUuid(request.params.id);
+
+    const row = await fetchPolicyRow(request.params.id);
+    if (!row) {
+      throw new NotFoundError('policy_not_found');
+    }
+    await requirePolicyManageAccess(account, {
+      federationId: row.access_federation_id as string | null,
+      category: row.access_category as string | null,
+    });
+
+    assertEmptyActionBody(request.body);
+    const result = await pool.query(
+      `UPDATE policies SET status = 'active', updated_at = now()
+       WHERE id = $1 AND status = 'cancelled' AND valid_to >= current_date
+         AND EXISTS (SELECT 1 FROM applications a WHERE a.id = policies.application_id AND a.status <> 'cancelled')
+         AND NOT EXISTS (SELECT 1 FROM payments pay WHERE pay.application_id = policies.application_id AND pay.status = 'refunded')
+       RETURNING id`,
+      [request.params.id],
+    );
+    if (result.rowCount === 0) {
+      throw new BadRequestError('invalid_transition');
+    }
+
+    const refreshed = await fetchPolicyRow(request.params.id);
+    return reply.status(200).send(await buildPolicyDetailResponse(refreshed as Record<string, unknown>, account));
+  });
+
+  // Marks an active policy expired — only once its coverage term has actually
+  // lapsed (the day after valid_to). Terminal: nothing transitions out of 'expired'.
+  app.post<{ Params: { id: string } }>('/api/policies/:id/expire', async (request, reply) => {
+    const account = await authenticate(request);
+    assertUuid(request.params.id);
+
+    const row = await fetchPolicyRow(request.params.id);
+    if (!row) {
+      throw new NotFoundError('policy_not_found');
+    }
+    await requirePolicyManageAccess(account, {
+      federationId: row.access_federation_id as string | null,
+      category: row.access_category as string | null,
+    });
+
+    assertEmptyActionBody(request.body);
+    const result = await pool.query(
+      `UPDATE policies SET status = 'expired', updated_at = now()
+       WHERE id = $1 AND status = 'active' AND valid_to < current_date
+       RETURNING id`,
+      [request.params.id],
+    );
+    if (result.rowCount === 0) {
+      throw new BadRequestError('invalid_transition');
+    }
+
+    const refreshed = await fetchPolicyRow(request.params.id);
+    return reply.status(200).send(await buildPolicyDetailResponse(refreshed as Record<string, unknown>, account));
   });
 
   // Streams the privately stored policy PDF back to an authorized caller. The
@@ -192,7 +391,7 @@ export async function policiesRoutes(app: FastifyInstance): Promise<void> {
     }
 
     reply.header('Content-Type', 'application/pdf');
-    reply.header('Content-Disposition', `attachment; filename="${row.policy_number}${path.extname(storedFilename)}"`);
+    reply.header('Content-Disposition', `attachment; filename="policy${path.extname(storedFilename)}"; filename*=UTF-8''${encodeURIComponent(String(row.policy_number) + path.extname(storedFilename)).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16)}`)}`);
     return reply.send(createReadStream(filePath));
   });
 }

@@ -11,6 +11,7 @@
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 const POLICIES_DIR = process.env.POLICIES_DIR || '/var/lib/olnoo-insurance/policies';
 
@@ -18,7 +19,13 @@ const POLICIES_DIR = process.env.POLICIES_DIR || '/var/lib/olnoo-insurance/polic
 export async function savePolicyPdfFile(policyId: string, bytes: Buffer | Uint8Array): Promise<string> {
   await fs.mkdir(POLICIES_DIR, { recursive: true, mode: 0o700 });
   const filename = `${policyId}.pdf`;
-  await fs.writeFile(path.join(POLICIES_DIR, filename), bytes, { mode: 0o600 });
+  const temporaryPath = path.join(POLICIES_DIR, `${policyId}-${randomUUID()}.tmp`);
+  try {
+    await fs.writeFile(temporaryPath, bytes, { mode: 0o600 });
+    await fs.rename(temporaryPath, path.join(POLICIES_DIR, filename));
+  } finally {
+    await fs.rm(temporaryPath, { force: true });
+  }
   return filename;
 }
 
