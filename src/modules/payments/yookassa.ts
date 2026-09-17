@@ -14,6 +14,9 @@ export interface YookassaPayment {
   id: string;
   status: YookassaPaymentStatus;
   paid: boolean;
+  amount?: { value: string; currency: string };
+  refunded_amount?: { value: string; currency: string };
+  metadata?: Record<string, unknown>;
   confirmation?: { type: string; confirmation_url?: string };
 }
 
@@ -165,4 +168,21 @@ export function mapYookassaStatus(status: YookassaPaymentStatus): 'pending' | 'p
     return 'cancelled';
   }
   return 'pending';
+}
+
+export function yookassaAmountToKopecks(amount: { value: string; currency: string } | undefined): number | null {
+  if (!amount || amount.currency !== 'RUB' || !/^\d+(?:\.\d{1,2})?$/.test(amount.value)) {
+    return null;
+  }
+  const [rubles, kopecks = ''] = amount.value.split('.');
+  const value = Number(rubles) * 100 + Number(kopecks.padEnd(2, '0'));
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+export function mapYookassaPaymentState(payment: YookassaPayment): 'pending' | 'paid' | 'cancelled' | 'refunded' {
+  const refundedKopecks = yookassaAmountToKopecks(payment.refunded_amount);
+  if (refundedKopecks !== null && refundedKopecks > 0) {
+    return 'refunded';
+  }
+  return mapYookassaStatus(payment.status);
 }

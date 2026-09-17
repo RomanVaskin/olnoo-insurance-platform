@@ -93,7 +93,9 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
       shop_id_masked: shopId ? maskShopId(shopId) : null,
       secret_key_configured: secretKeyConfigured,
       mode: configured ? 'live' : 'not_configured',
-      webhook_configured: false,
+      // This is an operator-facing readiness indicator. YooKassa itself is
+      // configured manually in its dashboard; we never return that URL here.
+      webhook_configured: Boolean(process.env.YOOKASSA_WEBHOOK_PUBLIC_URL),
     });
   });
 

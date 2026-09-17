@@ -6,8 +6,16 @@ import { getAccessibleCategories } from '../modules/auth/insurance-access';
 import { assertUuid, NotFoundError, BadRequestError, toNumber } from '../lib/api-helpers';
 import { federationSummary, personSummary, productSummary } from '../lib/mappers';
 import { getPolicyForApplication } from '../lib/related-queries';
-import { createYookassaPayment, getYookassaPayment, mapYookassaStatus } from '../modules/payments/yookassa';
+import {
+  createYookassaPayment,
+  getYookassaPayment,
+  mapYookassaPaymentState,
+  mapYookassaStatus,
+  yookassaAmountToKopecks,
+  type YookassaPayment,
+} from '../modules/payments/yookassa';
 import { resolvePaymentCredentials, getCredentialsForPaymentAccount } from '../modules/payments/routing';
+import { applyVerifiedPaymentState } from '../modules/payments/lifecycle';
 
 const LIST_SELECT = `
   SELECT
@@ -43,6 +51,100 @@ function mapPaymentRow(row: Record<string, unknown>) {
     product: productSummary(row),
     policy_number: (row.policy_number as string | null) ?? null,
   };
+}
+
+function assertReturnUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new BadRequestError('invalid_return_url');
+  }
+  if (url.username || url.password || (url.protocol !== 'https:' && url.protocol !== 'http:')) {
+    throw new BadRequestError('invalid_return_url');
+  }
+
+  const allowedOrigins = (process.env.PAYMENT_RETURN_URL_ORIGINS ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  if (process.env.NODE_ENV === 'production') {
+    if (url.protocol !== 'https:' || allowedOrigins.length === 0 || !allowedOrigins.includes(url.origin)) {
+      throw new BadRequestError('return_url_not_allowed');
+    }
+  } else if (allowedOrigins.length > 0 && !allowedOrigins.includes(url.origin)) {
+    throw new BadRequestError('return_url_not_allowed');
+  }
+  return url.toString();
+}
+
+function assertVerifiedPayment(
+  payment: YookassaPayment,
+  expected: { providerPaymentId: string; applicationId: string; amountKopecks: number; currency: string },
+): void {
+  const amountKopecks = yookassaAmountToKopecks(payment.amount);
+  if (
+    payment.id !== expected.providerPaymentId ||
+    amountKopecks !== expected.amountKopecks ||
+    expected.currency !== 'RUB' ||
+    (payment.metadata?.application_id !== undefined && payment.metadata.application_id !== expected.applicationId)
+  ) {
+    throw new Error('yookassa_payment_verification_failed');
+  }
+}
+
+type YookassaWebhookEvent =
+  | 'payment.waiting_for_capture'
+  | 'payment.succeeded'
+  | 'payment.canceled'
+  | 'refund.succeeded';
+
+function parseWebhook(body: unknown): { event: YookassaWebhookEvent; providerPaymentId: string } {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new BadRequestError('invalid_webhook');
+  }
+  const notification = body as Record<string, unknown>;
+  const supportedEvents = new Set<YookassaWebhookEvent>([
+    'payment.waiting_for_capture',
+    'payment.succeeded',
+    'payment.canceled',
+    'refund.succeeded',
+  ]);
+  if (notification.type !== 'notification' || !supportedEvents.has(notification.event as YookassaWebhookEvent)) {
+    throw new BadRequestError('unsupported_webhook_event');
+  }
+  if (!notification.object || typeof notification.object !== 'object' || Array.isArray(notification.object)) {
+    throw new BadRequestError('invalid_webhook');
+  }
+  const event = notification.event as YookassaWebhookEvent;
+  const object = notification.object as Record<string, unknown>;
+  const expectedStatus = event === 'payment.succeeded'
+    ? 'succeeded'
+    : event === 'payment.canceled'
+      ? 'canceled'
+      : event === 'payment.waiting_for_capture'
+        ? 'waiting_for_capture'
+        : 'succeeded';
+  if (object.status !== expectedStatus) {
+    throw new BadRequestError('invalid_webhook');
+  }
+  const providerPaymentId = event === 'refund.succeeded' ? object.payment_id : object.id;
+  if (typeof providerPaymentId !== 'string' || providerPaymentId.length === 0 || providerPaymentId.length > 200) {
+    throw new BadRequestError('invalid_webhook');
+  }
+  return { event, providerPaymentId };
+}
+
+async function fetchAndVerifyYookassaPayment(row: Record<string, unknown>): Promise<YookassaPayment> {
+  const credentials = await getCredentialsForPaymentAccount(row.payment_account_id as string | null);
+  const payment = await getYookassaPayment(row.provider_payment_id as string, credentials);
+  assertVerifiedPayment(payment, {
+    providerPaymentId: row.provider_payment_id as string,
+    applicationId: row.application_id as string,
+    amountKopecks: toNumber(row.amount_kopecks),
+    currency: row.currency as string,
+  });
+  return payment;
 }
 
 export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
@@ -122,11 +224,12 @@ export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
     const account = await authenticate(request);
 
     const applicationId = request.body?.application_id;
-    const returnUrl = request.body?.return_url;
-    if (!applicationId || !returnUrl) {
+    const rawReturnUrl = request.body?.return_url;
+    if (!applicationId || !rawReturnUrl) {
       throw new BadRequestError('application_id_and_return_url_required');
     }
     assertUuid(applicationId);
+    const returnUrl = assertReturnUrl(rawReturnUrl);
 
     const applicationResult = await pool.query(
       `SELECT a.id, a.status, a.amount_kopecks, a.person_id, a.federation_id AS access_federation_id,
@@ -151,6 +254,9 @@ export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
 
     if (application.status === 'paid' || application.status === 'policy_issued') {
       throw new BadRequestError('application_already_paid');
+    }
+    if (application.status === 'cancelled') {
+      throw new BadRequestError('application_cancelled');
     }
 
     // Receipt is mandatory for this shop; the email always comes from the person's
@@ -191,6 +297,14 @@ export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
       [applicationId, yookassaPayment.id, amountKopecks, status, credentials.paymentAccountId],
     );
 
+    const verifiedState = mapYookassaPaymentState(yookassaPayment);
+    if (verifiedState !== 'pending') {
+      const lifecycle = await applyVerifiedPaymentState(yookassaPayment.id, verifiedState);
+      if (lifecycle?.pdfError) {
+        request.log.error(lifecycle.pdfError, 'Automatic policy PDF generation failed');
+      }
+    }
+
     return reply.status(200).send({
       payment_id: insertResult.rows[0].id,
       confirmation_url: yookassaPayment.confirmation?.confirmation_url ?? null,
@@ -198,14 +312,15 @@ export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-  // Fetches the live status from YooKassa, updates payments.status (and applications.status
-  // on first success), and returns the current status.
+  // Fetches the live status from YooKassa, applies the same idempotent payment,
+  // application, and policy lifecycle as the webhook, and returns the current status.
   app.get<{ Params: { id: string } }>('/api/payments/:id/status', async (request, reply) => {
     const account = await authenticate(request);
     assertUuid(request.params.id);
 
     const result = await pool.query(
-      `SELECT pay.id, pay.application_id, pay.provider, pay.provider_payment_id, pay.status, pay.paid_at,
+      `SELECT pay.id, pay.application_id, pay.provider, pay.provider_payment_id, pay.amount_kopecks,
+              pay.currency, pay.status, pay.paid_at,
               pay.payment_account_id,
               a.person_id, a.federation_id AS access_federation_id, a.status AS application_status,
               ip.category AS access_category
@@ -230,34 +345,54 @@ export async function paymentsRoutes(app: FastifyInstance): Promise<void> {
       throw new BadRequestError('unsupported_provider');
     }
 
-    // Re-resolve the *same* credentials this payment was created under, not a fresh
-    // routing lookup — routing rules may have changed since, but this payment still
-    // lives under whichever shop originally created it.
-    const credentials = await getCredentialsForPaymentAccount(row.payment_account_id as string | null);
-    const yookassaPayment = await getYookassaPayment(row.provider_payment_id as string, credentials);
-    const status = mapYookassaStatus(yookassaPayment.status);
-
-    let paidAt = row.paid_at as string | null;
-    if (status !== row.status) {
-      paidAt = status === 'paid' ? paidAt ?? new Date().toISOString() : paidAt;
-      await pool.query(`UPDATE payments SET status = $1, paid_at = $2, updated_at = now() WHERE id = $3`, [
-        status,
-        paidAt,
-        row.id,
-      ]);
+    const yookassaPayment = await fetchAndVerifyYookassaPayment(row);
+    const lifecycle = await applyVerifiedPaymentState(
+      row.provider_payment_id as string,
+      mapYookassaPaymentState(yookassaPayment),
+    );
+    if (!lifecycle) {
+      throw new NotFoundError('payment_not_found');
     }
-
-    if (status === 'paid' && row.application_status !== 'paid' && row.application_status !== 'policy_issued') {
-      await pool.query(
-        `UPDATE applications SET status = 'paid', updated_at = now() WHERE id = $1 AND status NOT IN ('paid', 'policy_issued')`,
-        [row.application_id],
-      );
+    if (lifecycle.pdfError) {
+      request.log.error(lifecycle.pdfError, 'Automatic policy PDF generation failed');
     }
 
     return reply.status(200).send({
-      payment_id: row.id,
-      status,
-      paid_at: paidAt,
+      payment_id: lifecycle.paymentId,
+      status: lifecycle.status,
+      paid_at: lifecycle.paidAt,
     });
+  });
+
+  // YooKassa does not sign Basic Auth webhooks. Validate the notification shape, then
+  // read the payment back from YooKassa with the exact payment_account_id credentials
+  // used at creation time before applying any state. Duplicate delivery is safe.
+  app.post<{ Body: unknown }>('/api/payments/yookassa/webhook', async (request, reply) => {
+    const notification = parseWebhook(request.body);
+    const paymentResult = await pool.query(
+      `SELECT id, application_id, provider_payment_id, amount_kopecks, currency, payment_account_id
+       FROM payments
+       WHERE provider = 'yookassa' AND provider_payment_id = $1`,
+      [notification.providerPaymentId],
+    );
+    const row = paymentResult.rows[0];
+    if (!row) {
+      throw new NotFoundError('payment_not_found');
+    }
+
+    const yookassaPayment = await fetchAndVerifyYookassaPayment(row);
+    const verifiedState = mapYookassaPaymentState(yookassaPayment);
+    if (notification.event === 'refund.succeeded' && verifiedState !== 'refunded') {
+      throw new Error('yookassa_refund_not_confirmed');
+    }
+    const lifecycle = await applyVerifiedPaymentState(notification.providerPaymentId, verifiedState);
+    if (!lifecycle) {
+      throw new NotFoundError('payment_not_found');
+    }
+    if (lifecycle.pdfError) {
+      request.log.error(lifecycle.pdfError, 'Automatic policy PDF generation failed');
+    }
+
+    return reply.status(200).send({ status: 'ok' });
   });
 }

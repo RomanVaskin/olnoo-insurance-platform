@@ -14,6 +14,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 const POLICIES_DIR = process.env.POLICIES_DIR || '/var/lib/olnoo-insurance/policies';
+const POLICY_PDF_FILENAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.pdf$/i;
 
 /** Writes the PDF bytes under `<policyId>.pdf` and returns that filename (as stored in policies.policy_url). */
 export async function savePolicyPdfFile(policyId: string, bytes: Buffer | Uint8Array): Promise<string> {
@@ -30,5 +31,8 @@ export async function savePolicyPdfFile(policyId: string, bytes: Buffer | Uint8A
 }
 
 export function policyPdfFilePath(filename: string): string {
+  if (!POLICY_PDF_FILENAME.test(filename) || path.basename(filename) !== filename) {
+    throw new Error('invalid_policy_pdf_filename');
+  }
   return path.join(POLICIES_DIR, filename);
 }

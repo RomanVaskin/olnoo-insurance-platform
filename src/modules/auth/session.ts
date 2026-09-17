@@ -53,11 +53,17 @@ export function setSessionCookie(reply: FastifyReply, token: string, expiresAt: 
     httpOnly: true,
     sameSite: 'lax',
     path: '/',
-    secure: false,
+    // Local HTTP development remains usable; deployed sessions are never sent
+    // over an unencrypted connection.
+    secure: process.env.NODE_ENV === 'production',
     expires: expiresAt,
   });
 }
 
 export function clearSessionCookie(reply: FastifyReply): void {
-  reply.clearCookie(SESSION_COOKIE_NAME, { path: '/' });
+  reply.clearCookie(SESSION_COOKIE_NAME, {
+    path: '/',
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+  });
 }

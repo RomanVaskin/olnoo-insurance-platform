@@ -383,7 +383,12 @@ export async function policiesRoutes(app: FastifyInstance): Promise<void> {
       throw new NotFoundError('policy_pdf_not_generated');
     }
 
-    const filePath = policyPdfFilePath(storedFilename);
+    let filePath: string;
+    try {
+      filePath = policyPdfFilePath(storedFilename);
+    } catch {
+      throw new NotFoundError('policy_pdf_file_not_found');
+    }
     try {
       await stat(filePath);
     } catch {

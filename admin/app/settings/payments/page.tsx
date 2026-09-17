@@ -161,7 +161,7 @@ export default function Page() {
               </Row>
               <Row label="Режим">{settings.mode === 'live' ? 'Боевой' : 'Не настроен'}</Row>
               <Row label="Webhook">
-                <Badge ok={settings.webhook_configured} label="Не настроен" />
+                <Badge ok={settings.webhook_configured} label={settings.webhook_configured ? 'Настроен' : 'Не настроен'} />
               </Row>
             </div>
 
