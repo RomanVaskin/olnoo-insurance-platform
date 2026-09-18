@@ -10,7 +10,7 @@ import { FederationFormDialog } from '@/components/federations/federation-form-d
 import { InsuredStatusBadge } from '@/components/athletes/insured-status-badge'
 import { StatePanel } from '@/components/applications/state-panel'
 import { useAccount } from '@/lib/auth-context'
-import { getInsuranceTypeLabel } from '@/lib/auth'
+import { canManageInsuranceType, getInsuranceTypeLabel } from '@/lib/auth'
 import { ApiError, fetchFederation, type FederationDetail } from '@/lib/api'
 import { formatKopecks, formatPersonName } from '@/lib/utils'
 
@@ -40,6 +40,7 @@ export default function Page() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
   const account = useAccount()
+  const canManageSport = canManageInsuranceType(account, 'sport')
   const [federation, setFederation] = useState<FederationDetail | null>(null)
   const [state, setState] = useState<LoadState>('loading')
   const [editOpen, setEditOpen] = useState(false)
@@ -90,7 +91,7 @@ export default function Page() {
         description={federation ? federation.federation.name : undefined}
         action={
           <div className="flex gap-2">
-            {account?.role === 'super_admin' && federation ? (
+            {canManageSport && federation ? (
               <Button variant="outline" size="lg" onClick={() => setEditOpen(true)}>
                 <Pencil className="size-4" />
                 Редактировать
@@ -103,7 +104,7 @@ export default function Page() {
           </div>
         }
       />
-      {account?.role === 'super_admin' && federation ? (
+      {canManageSport && federation ? (
         <FederationFormDialog
           open={editOpen}
           onOpenChange={setEditOpen}

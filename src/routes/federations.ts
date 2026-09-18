@@ -2,13 +2,15 @@ import type { FastifyInstance } from 'fastify';
 import { pool } from '../db/pool';
 import {
   authenticate,
-  AuthError,
   getAccessibleFederationIds,
   isFinanceAllowed,
   requireFederationMembership,
-  requireRole,
 } from '../modules/auth/guards';
-import { getAccessibleCategories, getFederationIdsForCategories } from '../modules/auth/insurance-access';
+import {
+  getAccessibleCategories,
+  requireSportAccess,
+  requireSportManage,
+} from '../modules/auth/insurance-access';
 import { assertUuid, BadRequestError, NotFoundError, toNumber } from '../lib/api-helpers';
 
 // $2::text[] is the caller's accessible insurance types (NULL = unrestricted); only
@@ -76,11 +78,10 @@ export async function federationsRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/federations', async (request, reply) => {
     const account = await authenticate(request);
     const categories = await getAccessibleCategories(account);
-    // Federations have no category of their own — an 'admin' account only sees
-    // federations that have at least one product assignment in its assigned types
-    // (categories !== null implies account.role === 'admin' here).
-    const federationIds =
-      categories !== null ? await getFederationIdsForCategories(categories) : await getAccessibleFederationIds(account);
+    // Federations are a sport-domain entity. Only sport admins may browse the
+    // global federation directory, and product assignment is not a prerequisite.
+    if (account.role === 'admin') await requireSportAccess(account);
+    const federationIds = account.role === 'admin' ? null : await getAccessibleFederationIds(account);
     const showFinance = isFinanceAllowed(account.role);
 
     const result = await pool.query(
@@ -127,15 +128,7 @@ export async function federationsRoutes(app: FastifyInstance): Promise<void> {
     const showFinance = account.role === 'super_admin' || account.role === 'admin' || membershipRole === 'director';
     const categories = await getAccessibleCategories(account);
 
-    // requireFederationMembership above lets 'admin' through unconditionally (it isn't
-    // federation-scoped) — this is the actual insurance-type check for that role: the
-    // federation must have at least one product in one of its assigned categories.
-    if (categories !== null) {
-      const eligibleFederationIds = await getFederationIdsForCategories(categories);
-      if (!eligibleFederationIds.includes(federationId)) {
-        throw new AuthError(403, 'forbidden');
-      }
-    }
+    if (account.role === 'admin') await requireSportAccess(account);
 
     const [usersResult, athletesResult, productsResult, athleteCountResult, aggregatesResult] = await Promise.all([
       pool.query(
@@ -229,7 +222,7 @@ export async function federationsRoutes(app: FastifyInstance): Promise<void> {
     '/api/federations',
     async (request, reply) => {
       const account = await authenticate(request);
-      requireRole(account, ['super_admin']);
+      await requireSportManage(account);
 
       const body = request.body ?? {};
       const name = assertFederationName(body.name);
@@ -259,8 +252,8 @@ export async function federationsRoutes(app: FastifyInstance): Promise<void> {
     '/api/federations/:id',
     async (request, reply) => {
       const account = await authenticate(request);
-      requireRole(account, ['super_admin']);
       assertUuid(request.params.id);
+      if (account.role !== 'super_admin') await requireSportManage(account);
 
       const body = request.body ?? {};
       const updates: string[] = [];

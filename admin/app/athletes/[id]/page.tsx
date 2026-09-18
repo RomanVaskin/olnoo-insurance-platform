@@ -10,6 +10,7 @@ import { PolicyStatusBadge } from '@/components/policies/policy-status-badge'
 import { AthleteFormDialog } from '@/components/athletes/athlete-form-dialog'
 import { StatePanel } from '@/components/applications/state-panel'
 import { useAccount } from '@/lib/auth-context'
+import { canManageInsuranceType } from '@/lib/auth'
 import { ApiError, fetchAthlete, fetchFederations, type AthleteDetail, type Federation } from '@/lib/api'
 import { formatDateTime, formatPersonName } from '@/lib/utils'
 
@@ -39,7 +40,7 @@ export default function Page() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
   const account = useAccount()
-  const isSuperAdmin = account?.role === 'super_admin'
+  const canManageSport = canManageInsuranceType(account, 'sport')
   const [athlete, setAthlete] = useState<AthleteDetail | null>(null)
   const [federations, setFederations] = useState<Federation[]>([])
   const [state, setState] = useState<LoadState>('loading')
@@ -83,12 +84,12 @@ export default function Page() {
   }, [load])
 
   useEffect(() => {
-    if (isSuperAdmin) {
+    if (canManageSport) {
       fetchFederations()
         .then(setFederations)
         .catch(() => setFederations([]))
     }
-  }, [isSuperAdmin])
+  }, [canManageSport])
 
   const activePolicy = athlete?.policies.find((p) => p.status === 'active') ?? null
 
@@ -99,7 +100,7 @@ export default function Page() {
         description={athlete ? formatPersonName(athlete.person) : undefined}
         action={
           <div className="flex gap-2">
-            {isSuperAdmin && athlete ? (
+            {canManageSport && athlete ? (
               <Button variant="outline" size="lg" onClick={() => setEditOpen(true)}>
                 <Pencil className="size-4" />
                 Редактировать
@@ -112,7 +113,7 @@ export default function Page() {
           </div>
         }
       />
-      {isSuperAdmin && athlete ? (
+      {canManageSport && athlete ? (
         <AthleteFormDialog
           open={editOpen}
           onOpenChange={setEditOpen}

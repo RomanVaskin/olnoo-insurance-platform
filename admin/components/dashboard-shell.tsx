@@ -151,7 +151,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     return <div className="min-h-screen bg-background" />
   }
 
-  const navItems = getNavForRole(account.role)
+  const navItems = getNavForRole(account)
   const roleLabel = getRoleLabel(account.role)
 
   return (

@@ -88,3 +88,36 @@ export async function requireCategoryManage(account: SessionAccount, category: s
     throw new AuthError(403, 'forbidden');
   }
 }
+
+/** Whether this account is the sport-scoped operational administrator. */
+export async function canManageSport(account: SessionAccount): Promise<boolean> {
+  if (account.role === 'super_admin') return true;
+  return (await getCategoryPermission(account, 'sport')) === 'manage';
+}
+
+/** Requires read or manage access to the sport operational domain. */
+export async function requireSportAccess(account: SessionAccount): Promise<void> {
+  if ((await getCategoryPermission(account, 'sport')) === null) {
+    throw new AuthError(403, 'forbidden');
+  }
+}
+
+/** Requires operational management rights for the sport vertical. */
+export async function requireSportManage(account: SessionAccount): Promise<void> {
+  if (!(await canManageSport(account))) {
+    throw new AuthError(403, 'forbidden');
+  }
+}
+
+/** Confirms that a federation participates in the sport vertical. */
+export async function federationHasCategory(federationId: string, category: string): Promise<boolean> {
+  const result = await pool.query(
+    `SELECT 1
+     FROM federation_products fp
+     JOIN insurance_products ip ON ip.id = fp.product_id
+     WHERE fp.federation_id = $1 AND ip.category = $2
+     LIMIT 1`,
+    [federationId, category],
+  );
+  return result.rowCount === 1;
+}

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { pool } from '../db/pool';
 import { authenticate, getAccessibleFederationIds, isFinanceAllowed } from '../modules/auth/guards';
-import { getAccessibleCategories, getFederationIdsForCategories } from '../modules/auth/insurance-access';
+import { getAccessibleCategories, getFederationIdsForCategories, requireSportAccess } from '../modules/auth/insurance-access';
 import { toNumber } from '../lib/api-helpers';
 
 interface DashboardRow {
@@ -17,13 +17,15 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/dashboard', async (request, reply) => {
     const account = await authenticate(request);
     const categories = await getAccessibleCategories(account);
-    // Federations/athletes have no category of their own — for 'admin' (categories
-    // !== null), total_federations/total_athletes are derived from which federations
-    // have a qualifying product, same rule as GET /api/federations and /api/athletes.
+    // Federations/athletes are sport-domain entities. Sport admins see their full
+    // totals without requiring a product assignment.
     // Applications/policies/payments *do* have a product category directly, so those
     // three (and the amount) are additionally filtered by $2 regardless of $1.
+    if (account.role === 'admin' && categories?.includes('sport')) await requireSportAccess(account);
     const federationIds =
-      categories !== null ? await getFederationIdsForCategories(categories) : await getAccessibleFederationIds(account);
+      account.role === 'admin' && categories?.includes('sport')
+        ? null
+        : categories !== null ? await getFederationIdsForCategories(categories) : await getAccessibleFederationIds(account);
 
     const result = await pool.query<DashboardRow>(
       `SELECT

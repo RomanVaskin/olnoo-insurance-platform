@@ -9,6 +9,7 @@ import { FederationStatusBadge } from '@/components/federations/federation-statu
 import { FederationFormDialog } from '@/components/federations/federation-form-dialog'
 import { StatePanel } from '@/components/applications/state-panel'
 import { useAccount } from '@/lib/auth-context'
+import { canManageInsuranceType } from '@/lib/auth'
 import { ApiError, fetchFederations, type Federation } from '@/lib/api'
 import { formatKopecks } from '@/lib/utils'
 
@@ -17,6 +18,7 @@ type LoadState = 'loading' | 'ready' | 'forbidden' | 'error'
 export default function Page() {
   const router = useRouter()
   const account = useAccount()
+  const canManageSport = canManageInsuranceType(account, 'sport')
   const [federations, setFederations] = useState<Federation[]>([])
   const [state, setState] = useState<LoadState>('loading')
   const [createOpen, setCreateOpen] = useState(false)
@@ -54,7 +56,7 @@ export default function Page() {
         title="Федерации"
         description="Федерации, подключённые к платформе"
         action={
-          account?.role === 'super_admin' ? (
+          canManageSport ? (
             <Button size="lg" onClick={() => setCreateOpen(true)}>
               <Plus className="size-4" />
               Создать федерацию
@@ -62,7 +64,7 @@ export default function Page() {
           ) : undefined
         }
       />
-      {account?.role === 'super_admin' ? (
+      {canManageSport ? (
         <FederationFormDialog
           open={createOpen}
           onOpenChange={setCreateOpen}

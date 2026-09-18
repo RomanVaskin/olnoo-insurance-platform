@@ -9,6 +9,7 @@ import { InsuredStatusBadge } from '@/components/athletes/insured-status-badge'
 import { AthleteFormDialog } from '@/components/athletes/athlete-form-dialog'
 import { StatePanel } from '@/components/applications/state-panel'
 import { useAccount } from '@/lib/auth-context'
+import { canManageInsuranceType } from '@/lib/auth'
 import { ApiError, fetchAthletes, fetchFederations, type Athlete, type Federation } from '@/lib/api'
 import { formatPersonName } from '@/lib/utils'
 
@@ -18,6 +19,7 @@ export default function Page() {
   const router = useRouter()
   const account = useAccount()
   const isSuperAdmin = account?.role === 'super_admin'
+  const canManageSport = canManageInsuranceType(account, 'sport')
   const [athletes, setAthletes] = useState<Athlete[]>([])
   const [federations, setFederations] = useState<Federation[]>([])
   const [state, setState] = useState<LoadState>('loading')
@@ -49,12 +51,12 @@ export default function Page() {
   }, [load])
 
   useEffect(() => {
-    if (isSuperAdmin) {
+    if (canManageSport) {
       fetchFederations()
         .then(setFederations)
         .catch(() => setFederations([]))
     }
-  }, [isSuperAdmin])
+  }, [canManageSport])
 
   return (
     <>
@@ -62,7 +64,7 @@ export default function Page() {
         title="Спортсмены"
         description="Спортсмены федераций и их страховой статус"
         action={
-          isSuperAdmin ? (
+          canManageSport ? (
             <Button size="lg" onClick={() => setCreateOpen(true)}>
               <Plus className="size-4" />
               Создать спортсмена
@@ -70,7 +72,7 @@ export default function Page() {
           ) : undefined
         }
       />
-      {isSuperAdmin ? (
+      {canManageSport ? (
         <AthleteFormDialog
           open={createOpen}
           onOpenChange={setCreateOpen}

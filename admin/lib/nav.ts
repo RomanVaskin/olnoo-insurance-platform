@@ -1,4 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
+import type { Account } from './auth'
 import {
   LayoutDashboard,
   FileText,
@@ -51,9 +52,6 @@ const federationDirectorNav: NavItem[] = [
   { label: 'Платежи', href: '/payments', icon: Wallet },
 ]
 
-// 'admin' is scoped by insurance type (enforced server-side), not by federation — it has
-// no access to Athletes/Federations/Users/Import/Settings at all (see
-// src/routes/*.ts guards), so those never appear here regardless of which types it holds.
 const adminNav: NavItem[] = [
   { label: 'Обзор', href: '/dashboard', icon: LayoutDashboard },
   { label: 'Заявки', href: '/applications', icon: Inbox },
@@ -63,10 +61,26 @@ const adminNav: NavItem[] = [
   { label: 'Платежи', href: '/payments', icon: Wallet },
 ]
 
-export function getNavForRole(role: string | null | undefined): NavItem[] {
+export function getNavForRole(account: Account | null | undefined): NavItem[] {
+  const role = account?.role
   if (role === 'super_admin') return superAdminNav
   if (role === 'federation_secretary') return federationSecretaryNav
   if (role === 'federation_director') return federationDirectorNav
-  if (role === 'admin') return adminNav
+  if (role === 'admin') {
+    const sport = account?.insurance_access.find((grant) => grant.insurance_type === 'sport')
+    if (!sport) return adminNav
+    const sportNav: NavItem[] = [
+      { label: 'Обзор', href: '/dashboard', icon: LayoutDashboard },
+      { label: 'Федерации', href: '/federations', icon: Building2 },
+      { label: 'Спортсмены', href: '/athletes', icon: Users },
+      { label: 'Страховые продукты', href: '/products', icon: PackageSearch },
+      { label: 'Заявки', href: '/applications', icon: Inbox },
+      { label: 'Полисы', href: '/policies', icon: FileText },
+      { label: 'Документы', href: '/documents', icon: FileScan },
+      { label: 'Платежи', href: '/payments', icon: Wallet },
+    ]
+    if (sport.permission === 'manage') sportNav.push({ label: 'Импорт данных', href: '/import', icon: Upload })
+    return sportNav
+  }
   return []
 }

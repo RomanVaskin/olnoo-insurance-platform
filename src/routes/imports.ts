@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import type { MultipartFile, MultipartValue } from '@fastify/multipart';
 import { pool } from '../db/pool';
-import { authenticate, requireRole } from '../modules/auth/guards';
+import { authenticate } from '../modules/auth/guards';
+import { requireSportManage } from '../modules/auth/insurance-access';
+import type { SessionAccount } from '../modules/auth/session';
 import { BadRequestError } from '../lib/api-helpers';
 import { parseWorkbook } from '../modules/imports/xlsx';
 import { IMPORT_TYPES, buildTemplate, type ImportType } from '../modules/imports/templates';
@@ -68,10 +70,48 @@ function summarize(rows: ImportRowResult<unknown>[]) {
   return { total_rows: rows.length, valid_rows: valid, invalid_rows: rows.length - valid };
 }
 
+/** Import is operational access: a scoped admin may import only sport data. */
+async function requireImportAccess(account: SessionAccount): Promise<void> {
+  if (account.role === 'super_admin') return;
+  await requireSportManage(account);
+}
+
+async function enforceSportImportScope(account: SessionAccount, rows: ImportRowResult<unknown>[], type: ImportType): Promise<void> {
+  if (account.role === 'super_admin') return;
+
+  for (const row of rows) {
+    if (!row.data || row.errors.length > 0) continue;
+    let allowed = true;
+    if (type === 'federations') {
+      // Federations are sport-domain records regardless of product assignment.
+      allowed = true;
+    } else if (type === 'athletes') {
+      // Athletes and their memberships are likewise sport-domain records.
+      allowed = true;
+    } else if (type === 'products') {
+      const product = row.data as ProductImportRow;
+      allowed = product.category === 'sport';
+      if (allowed && row.matched_id) {
+        const existing = await pool.query<{ category: string }>(`SELECT category FROM insurance_products WHERE id = $1`, [row.matched_id]);
+        allowed = existing.rows[0]?.category === 'sport';
+      }
+    } else {
+      const assignment = row.data as AssignmentImportRow;
+      const product = await pool.query<{ category: string }>(`SELECT category FROM insurance_products WHERE id = $1`, [assignment.product_id]);
+      allowed = product.rows[0]?.category === 'sport';
+    }
+    if (!allowed) {
+      row.errors.push('forbidden_insurance_type');
+      row.data = null;
+      row.action = 'skip';
+    }
+  }
+}
+
 export async function importsRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { type: string } }>('/api/imports/template/:type', async (request, reply) => {
     const account = await authenticate(request);
-    requireRole(account, ['super_admin']);
+    await requireImportAccess(account);
     const type = assertImportType(request.params.type);
 
     const buffer = await buildTemplate(type);
@@ -86,7 +126,7 @@ export async function importsRoutes(app: FastifyInstance): Promise<void> {
   // expected to show this to the admin and only send rows with no errors to commit.
   app.post('/api/imports/preview', async (request, reply) => {
     const account = await authenticate(request);
-    requireRole(account, ['super_admin']);
+    await requireImportAccess(account);
 
     const { buffer, type: rawType } = await readUpload((request.body ?? {}) as MultipartBody);
     const type = assertImportType(rawType);
@@ -97,6 +137,7 @@ export async function importsRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const rows = await validateRows(pool, type, rawRows);
+    await enforceSportImportScope(account, rows, type);
 
     return reply.status(200).send({
       import_type: type,
@@ -111,7 +152,7 @@ export async function importsRoutes(app: FastifyInstance): Promise<void> {
   // reported as errors; the transaction only rolls back entirely on an unexpected DB error.
   app.post<{ Body: { type?: unknown; rows?: unknown } }>('/api/imports/commit', async (request, reply) => {
     const account = await authenticate(request);
-    requireRole(account, ['super_admin']);
+    await requireImportAccess(account);
 
     const body = request.body ?? {};
     const type = assertImportType(body.type);
@@ -140,6 +181,7 @@ export async function importsRoutes(app: FastifyInstance): Promise<void> {
       await client.query('BEGIN');
 
       const revalidated = await validateRows(client, type, rawRows);
+      await enforceSportImportScope(account, revalidated, type);
 
       for (const row of revalidated) {
         if (row.errors.length > 0 || !row.data) {

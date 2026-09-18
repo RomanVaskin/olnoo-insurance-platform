@@ -1,7 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { pool } from '../db/pool';
-import { authenticate, getAccessibleFederationIds, requireRole } from '../modules/auth/guards';
-import { getAccessibleCategories, getFederationIdsForCategories } from '../modules/auth/insurance-access';
+import { authenticate, getAccessibleFederationIds } from '../modules/auth/guards';
+import {
+  getAccessibleCategories,
+  requireSportAccess,
+  requireSportManage,
+} from '../modules/auth/insurance-access';
 import type { SessionAccount } from '../modules/auth/session';
 import { assertUuid, BadRequestError, NotFoundError, HttpError, toNumber, toNullableNumber } from '../lib/api-helpers';
 import { federationSummary, productSummary } from '../lib/mappers';
@@ -186,19 +190,16 @@ function mapAthleteRow(row: Record<string, unknown>) {
 }
 
 /**
- * Federation-id filter for the athlete list/detail queries. Athletes have no category
- * of their own — an 'admin' account's visibility is derived from which federations have
- * a qualifying product (getFederationIdsForCategories), layered on top of the ordinary
- * getAccessibleFederationIds result (null for super_admin/admin, a real list for
- * federation staff, throws for athlete/guardian).
+ * Athletes are sport-domain entities. A sport admin sees every athlete regardless of
+ * product assignment; federation staff retain their existing federation filter.
  */
 async function resolveAthleteFederationFilter(account: SessionAccount): Promise<string[] | null> {
   const federationIds = await getAccessibleFederationIds(account);
   if (account.role !== 'admin') {
     return federationIds;
   }
-  const categories = await getAccessibleCategories(account);
-  return getFederationIdsForCategories(categories as string[]);
+  await requireSportAccess(account);
+  return null;
 }
 
 export async function athletesRoutes(app: FastifyInstance): Promise<void> {
@@ -257,6 +258,7 @@ export async function athletesRoutes(app: FastifyInstance): Promise<void> {
       status: row.status,
     }));
 
+    const categories = await getAccessibleCategories(account);
     const [applicationsResult, paymentsResult, policiesResult] = await Promise.all([
       pool.query(
         `SELECT a.id, a.status, a.amount_kopecks, a.created_at,
@@ -266,17 +268,20 @@ export async function athletesRoutes(app: FastifyInstance): Promise<void> {
          LEFT JOIN federations f ON f.id = a.federation_id
          JOIN insurance_products ip ON ip.id = a.product_id
          WHERE a.person_id = $1 AND ($2::uuid[] IS NULL OR a.federation_id = ANY($2::uuid[]))
+           AND ($3::text[] IS NULL OR ip.category = ANY($3::text[]))
          ORDER BY a.created_at DESC`,
-        [personId, federationIds],
+        [personId, federationIds, categories],
       ),
       pool.query(
         `SELECT pay.id, pay.application_id, pay.provider, pay.provider_payment_id,
                 pay.amount_kopecks, pay.currency, pay.status, pay.paid_at, pay.created_at
          FROM payments pay
          JOIN applications a ON a.id = pay.application_id
+         JOIN insurance_products ip ON ip.id = a.product_id
          WHERE a.person_id = $1 AND ($2::uuid[] IS NULL OR a.federation_id = ANY($2::uuid[]))
+           AND ($3::text[] IS NULL OR ip.category = ANY($3::text[]))
          ORDER BY pay.created_at DESC`,
-        [personId, federationIds],
+        [personId, federationIds, categories],
       ),
       pool.query(
         `SELECT pol.id, pol.policy_number, pol.status, pol.valid_from, pol.valid_to, pol.policy_url,
@@ -284,8 +289,9 @@ export async function athletesRoutes(app: FastifyInstance): Promise<void> {
          FROM policies pol
          JOIN insurance_products ip ON ip.id = pol.product_id
          WHERE pol.person_id = $1 AND ($2::uuid[] IS NULL OR pol.federation_id = ANY($2::uuid[]))
+           AND ($3::text[] IS NULL OR ip.category = ANY($3::text[]))
          ORDER BY pol.valid_from DESC`,
-        [personId, federationIds],
+        [personId, federationIds, categories],
       ),
     ]);
 
@@ -337,7 +343,7 @@ export async function athletesRoutes(app: FastifyInstance): Promise<void> {
   // row — login/account management is a separate, not-yet-built task.
   app.post<{ Body: AthleteWriteBody }>('/api/athletes', async (request, reply) => {
     const account = await authenticate(request);
-    requireRole(account, ['super_admin']);
+    if (account.role !== 'super_admin') await requireSportManage(account);
 
     const body = request.body ?? {};
     const lastName = assertRequiredName(body.last_name, 'last_name_required');
@@ -349,6 +355,9 @@ export async function athletesRoutes(app: FastifyInstance): Promise<void> {
     const email = body.email === undefined ? null : assertEmail(body.email);
 
     const wantsMembership = hasAnyMembershipField(body);
+    if (account.role !== 'super_admin' && !wantsMembership) {
+      throw new BadRequestError('federation_id_required');
+    }
     let federationId: string | null = null;
     let club: string | null = null;
     let coach: string | null = null;
@@ -401,9 +410,12 @@ export async function athletesRoutes(app: FastifyInstance): Promise<void> {
   // (see the 409 below) — see the task report for why.
   app.patch<{ Params: { id: string }; Body: AthleteWriteBody }>('/api/athletes/:id', async (request, reply) => {
     const account = await authenticate(request);
-    requireRole(account, ['super_admin']);
     assertUuid(request.params.id);
     const personId = request.params.id;
+
+    if (account.role !== 'super_admin') {
+      await requireSportManage(account);
+    }
 
     const personExists = await pool.query(`SELECT 1 FROM persons WHERE id = $1`, [personId]);
     if (personExists.rowCount === 0) {
@@ -510,6 +522,9 @@ export async function athletesRoutes(app: FastifyInstance): Promise<void> {
             // club/coach/grade/weight/sport_name/status history for the old federation
             // with no undo — flagged per the task's own instruction, not implemented.
             throw new HttpError(409, 'federation_change_not_supported');
+          }
+          if (federationIdInput === undefined) {
+            throw new BadRequestError('federation_id_required');
           }
           // Person already has multiple memberships (not reachable via this API today,
           // but the schema allows it) — adding one more for a new federation is additive,
